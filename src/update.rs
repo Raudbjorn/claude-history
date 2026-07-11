@@ -174,7 +174,6 @@ fn install_support_files(extract_dir: &Path, current_exe: &Path) -> Result<()> {
     Ok(())
 }
 
-
 /// Replace the current binary with the new one, with rollback on failure.
 fn replace_binary(new_binary: &Path, current_exe: &Path) -> Result<()> {
     let exe_dir = current_exe
