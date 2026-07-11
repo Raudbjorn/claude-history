@@ -284,22 +284,17 @@ fn select_for_budget(
                 selected.insert(index);
             }
         }
-        while selected.len() > 1
-            && rendered_len(
-                messages,
-                &selected.iter().copied().collect::<Vec<_>>(),
-                CUT_MEASURE,
-                budget,
-            )
-            .chars()
-            .count()
+        let mut selected_vec = selected.iter().copied().collect::<Vec<_>>();
+        while selected_vec.len() > 1
+            && rendered_len(messages, &selected_vec, CUT_MEASURE, budget)
+                .chars()
+                .count()
                 > budget
         {
-            let last = *selected.iter().next_back().expect("selection is non-empty");
-            selected.remove(&last);
+            selected_vec.pop();
         }
-        if let Some(&only) = selected.iter().next()
-            && selected.len() == 1
+        if let Some(&only) = selected_vec.first()
+            && selected_vec.len() == 1
         {
             let rendered = rendered_len(messages, &[only], CUT_MEASURE, budget)
                 .chars()
@@ -311,6 +306,7 @@ fn select_for_budget(
                 )));
             }
         }
+        selected = selected_vec.into_iter().collect();
     }
     if selected.is_empty() && !messages.is_empty() {
         selected.insert(0);
