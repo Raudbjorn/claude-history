@@ -49,6 +49,18 @@ impl Default for ChunkConfig {
     }
 }
 
+impl ChunkConfig {
+    /// Clamp to the invariants chunking relies on: target >= 1, overlap < target.
+    pub fn sanitized(self) -> Self {
+        let target_chars = self.target_chars.max(1);
+        Self {
+            target_chars,
+            overlap_chars: self.overlap_chars.min(target_chars - 1),
+            context_turns: self.context_turns,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum SemanticChunkSource {
     #[default]

@@ -1,5 +1,6 @@
 use crate::search::literal::Literal;
 use crate::semantic::types::EmbeddedChunk;
+use std::borrow::Borrow;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SemanticTurnRole {
@@ -7,10 +8,10 @@ pub enum SemanticTurnRole {
     Assistant,
 }
 
-pub fn filter_embedded_chunks_by_literals(
-    chunks: Vec<EmbeddedChunk>,
+pub fn filter_embedded_chunks_by_literals<C: Borrow<EmbeddedChunk>>(
+    chunks: Vec<C>,
     literal_filters: &[Literal],
-) -> Vec<EmbeddedChunk> {
+) -> Vec<C> {
     if literal_filters.is_empty() {
         return chunks;
     }
@@ -18,6 +19,7 @@ pub fn filter_embedded_chunks_by_literals(
     chunks
         .into_iter()
         .filter(|chunk| {
+            let chunk = chunk.borrow();
             literal_filters
                 .iter()
                 .all(|literal| literal.matches(&chunk.text))

@@ -121,7 +121,7 @@ pub fn process_conversation_reader<R: BufRead>(
                         ..
                     } => 'user: {
                         // Track timestamps for conversation duration
-                        if let Some(ref ts_str) = timestamp
+                        if let Some(ts_str) = &timestamp
                             && let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_str)
                         {
                             if first_timestamp.is_none() {
@@ -829,6 +829,25 @@ mod tests {
             error.context_before,
             vec![user_msg("Before", None), filtered]
         );
+    }
+
+    #[test]
+    fn skipped_user_records_keep_error_line_numbers() {
+        let empty_user = r#"{"type":"user","message":{"role":"user","content":""}}"#.to_string();
+        let clear_metadata = user_msg("<command-name>/clear</command-name>", None);
+        let content = [
+            empty_user.clone(),
+            clear_metadata.clone(),
+            "{invalid json}".to_string(),
+            user_msg("After", None),
+        ]
+        .join("\n");
+
+        let conv = parse_jsonl(&content).unwrap().unwrap();
+        let error = &conv.parse_errors[0];
+
+        assert_eq!(error.line_number, 3);
+        assert_eq!(error.context_before, vec![empty_user, clear_metadata]);
     }
 
     #[test]

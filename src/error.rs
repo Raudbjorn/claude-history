@@ -31,6 +31,8 @@ pub enum AppError {
 
     #[error("Semantic search cancelled")]
     SemanticSearchCancelled,
+    #[error("Semantic search error: {0}")]
+    SemanticSearch(String),
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;

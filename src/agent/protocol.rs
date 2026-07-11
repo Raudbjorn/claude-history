@@ -11,6 +11,10 @@ const OUTLINE_SHORT_MESSAGE_LIMIT: usize = 20;
 const OUTLINE_SEGMENT_SIZE: usize = 10;
 const SNIPPET_LIMIT: usize = 80;
 
+/// Worst-case cut string used when measuring against the budget, so the
+/// final header (whose cut is computed after selection) can only be shorter.
+const CUT_MEASURE: &str = "head+focus+tail";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProtocolOptions {
     pub budget: Option<usize>,
@@ -55,7 +59,7 @@ pub fn format_read(
         }
     }
 
-    let selected = select_for_budget(&messages, focus, options.budget);
+    let selected = select_for_budget(&messages, focus, options.budget)?;
     let cut = cut_marker(messages.len(), &selected);
     let mut output = String::new();
     output.push_str(&format!(
@@ -239,7 +243,7 @@ fn try_expand(
     if rendered_len(
         messages,
         &selected.iter().copied().collect::<Vec<_>>(),
-        "head+focus+tail",
+        CUT_MEASURE,
         budget,
     )
     .chars()
@@ -257,13 +261,13 @@ fn select_for_budget(
     messages: &[RenderedMessage<'_>],
     focus: Option<ProtocolFocus>,
     budget: Option<usize>,
-) -> Vec<usize> {
+) -> Result<Vec<usize>> {
     let all: Vec<usize> = (0..messages.len()).collect();
     let Some(budget) = budget else {
-        return all;
+        return Ok(all);
     };
     if rendered_len(messages, &all, "none", budget).chars().count() <= budget {
-        return all;
+        return Ok(all);
     }
 
     let mut selected = BTreeSet::new();
@@ -280,13 +284,40 @@ fn select_for_budget(
                 selected.insert(index);
             }
         }
+        while selected.len() > 1
+            && rendered_len(
+                messages,
+                &selected.iter().copied().collect::<Vec<_>>(),
+                CUT_MEASURE,
+                budget,
+            )
+            .chars()
+            .count()
+                > budget
+        {
+            let last = *selected.iter().next_back().expect("selection is non-empty");
+            selected.remove(&last);
+        }
+        if let Some(&only) = selected.iter().next()
+            && selected.len() == 1
+        {
+            let rendered = rendered_len(messages, &[only], CUT_MEASURE, budget)
+                .chars()
+                .count();
+            if rendered > budget {
+                return Err(AppError::ConfigError(format!(
+                    "focus range exceeds budget: message m{} alone renders to {rendered} chars, over budget {budget}; raise --budget or narrow the focus range",
+                    messages[only].message.ordinal
+                )));
+            }
+        }
     }
     if selected.is_empty() && !messages.is_empty() {
         selected.insert(0);
         if rendered_len(
             messages,
             &selected.iter().copied().collect::<Vec<_>>(),
-            "tail",
+            CUT_MEASURE,
             budget,
         )
         .chars()
@@ -322,7 +353,7 @@ fn select_for_budget(
         }
     }
 
-    selected.into_iter().collect()
+    Ok(selected.into_iter().collect())
 }
 
 fn rendered_len(
@@ -547,6 +578,73 @@ mod tests {
         assert!(output.starts_with("protocol agent-read v=1 cut=head+focus+tail budget=260\n"));
         assert!(output.contains("message m4 role=user"));
         assert!(output.contains("message 4 with padding"));
+    }
+
+    #[test]
+    fn focused_read_output_stays_within_budget() {
+        let resolved = resolved("session.jsonl");
+        let transcript = transcript(
+            (1..=3)
+                .map(|index| {
+                    text_message(
+                        index,
+                        AgentMessageRole::User,
+                        &format!("focused message {index} {}", "padding ".repeat(8)),
+                    )
+                })
+                .collect(),
+        );
+        let budget = 250;
+
+        let output = format_read(
+            &[ReadRequest {
+                resolved: &resolved,
+                transcript: &transcript,
+                range: Some(MessageRange { start: 1, end: 3 }),
+            }],
+            Some(ProtocolFocus {
+                conversation_full_ref: None,
+                range: MessageRange { start: 1, end: 3 },
+            }),
+            ProtocolOptions {
+                budget: Some(budget),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert!(output.chars().count() <= budget);
+        assert!(output.contains("message m1 role=user"));
+        assert!(!output.contains("message m3 role=user"));
+    }
+
+    #[test]
+    fn single_focused_message_exceeding_budget_errors() {
+        let resolved = resolved("session.jsonl");
+        let transcript = transcript(vec![text_message(
+            1,
+            AgentMessageRole::User,
+            &"oversized ".repeat(40),
+        )]);
+
+        let error = format_read(
+            &[ReadRequest {
+                resolved: &resolved,
+                transcript: &transcript,
+                range: None,
+            }],
+            Some(ProtocolFocus {
+                conversation_full_ref: None,
+                range: MessageRange::single(1),
+            }),
+            ProtocolOptions {
+                budget: Some(120),
+                ..options()
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("focus range exceeds budget"));
     }
 
     #[test]

@@ -73,6 +73,12 @@ fn run_delete_empty_command(args: DeleteEmptyArgs) -> Result<()> {
     if summary.candidates.is_empty() {
         println!("No empty transcripts found.");
         println!("{}", delete_empty_summary_line(args.yes, 0));
+        if summary.skipped_unparsable > 0 {
+            println!(
+                "Skipped {} transcript(s) with unparsable lines (kept; not eligible for deletion).",
+                summary.skipped_unparsable
+            );
+        }
         return Ok(());
     }
 
@@ -106,6 +112,12 @@ fn run_delete_empty_command(args: DeleteEmptyArgs) -> Result<()> {
         "{}",
         delete_empty_summary_line(args.yes, summary.candidates.len())
     );
+    if summary.skipped_unparsable > 0 {
+        println!(
+            "Skipped {} transcript(s) with unparsable lines (kept; not eligible for deletion).",
+            summary.skipped_unparsable
+        );
+    }
 
     Ok(())
 }

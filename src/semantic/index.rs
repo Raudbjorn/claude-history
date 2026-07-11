@@ -7,7 +7,7 @@ use crate::semantic::cache::{
 use crate::semantic::chunk::build_chunks_with_sources;
 use crate::semantic::embed::SemanticEmbedder;
 use crate::semantic::filter::filter_embedded_chunks_by_literals;
-use crate::semantic::rank::{rank_chunk_hits, rank_chunks};
+use crate::semantic::rank::{best_hits_per_conversation, rank_chunk_hits};
 use crate::semantic::types::{
     ChunkConfig, EmbeddedChunk, EmbeddingCache, SemanticCancellationToken, SemanticChunk,
     SemanticChunkSource, SemanticHit,
@@ -250,12 +250,7 @@ impl SemanticIndexState {
             &scoped_chunks,
             cancellation,
         )?;
-        let hits = rank_chunks(
-            request.query,
-            &query_embedding,
-            &scoped_chunks,
-            cancellation,
-        )?;
+        let hits = best_hits_per_conversation(&chunk_hits);
         let progress = SemanticIndexProgress::Complete;
 
         Ok(SemanticIndexResponse {
@@ -327,7 +322,7 @@ impl SemanticIndexState {
         &self,
         request: &SemanticIndexRequest<'_>,
         cancellation: &SemanticCancellationToken,
-    ) -> Result<Vec<EmbeddedChunk>> {
+    ) -> Result<Vec<&EmbeddedChunk>> {
         let scope = request
             .scope
             .iter()
@@ -339,7 +334,7 @@ impl SemanticIndexState {
                 return Err(AppError::SemanticSearchCancelled);
             }
             if scope.contains(&(chunk.embedded.conversation_index, chunk.embedded.source)) {
-                chunks.push(chunk.embedded.clone());
+                chunks.push(&chunk.embedded);
             }
         }
         Ok(chunks)
