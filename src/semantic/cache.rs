@@ -59,8 +59,10 @@ pub fn embed_chunks_with_progress_and_save(
             match expected_dim {
                 Some(dim) if embedding.len() != dim => {
                     return Err(AppError::SemanticSearch(format!(
-                        "embedding dimension mismatch: expected {dim}, got {}",
-                        embedding.len()
+                        "embedding dimension mismatch: expected {dim}, got {} for chunk {}:{}",
+                        embedding.len(),
+                        chunk.session,
+                        chunk.chunk_index
                     )));
                 }
                 None => expected_dim = Some(embedding.len()),
