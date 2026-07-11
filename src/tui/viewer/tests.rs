@@ -1591,6 +1591,48 @@ fn nested_subagent_discovery_reuses_current_subagents_directory() {
 }
 
 #[test]
+fn duplicate_agent_descriptions_remain_unlinked() {
+    use super::{RenderableEntry, scan_subagent_dir};
+    use crate::claude::{AssistantMessage, ContentBlock, LogEntry};
+
+    let dir = tempfile::tempdir().unwrap();
+    let session_uuid = "aaaabbbb-cccc-dddd-eeee-ffffffffffff";
+    let subagents_dir = dir.path().join(session_uuid).join("subagents");
+    std::fs::create_dir_all(&subagents_dir).unwrap();
+    for agent_id in ["first", "second"] {
+        std::fs::write(subagents_dir.join(format!("agent-{agent_id}.jsonl")), b"").unwrap();
+        std::fs::write(
+            subagents_dir.join(format!("agent-{agent_id}.meta.json")),
+            r#"{"description":"same task"}"#,
+        )
+        .unwrap();
+    }
+    let tool_use_id = "legacy-agent-tool".to_string();
+    let entries = vec![RenderableEntry {
+        entry_index: 0,
+        entry: LogEntry::Assistant {
+            message: AssistantMessage {
+                role: "assistant".into(),
+                content: vec![ContentBlock::ToolUse {
+                    id: tool_use_id.clone(),
+                    name: "Agent".into(),
+                    input: serde_json::json!({"description": "same task"}),
+                }],
+                model: None,
+                usage: None,
+                id: None,
+            },
+            timestamp: None,
+            uuid: None,
+            parent_tool_use_id: None,
+        },
+    }];
+
+    let links = scan_subagent_dir(&dir.path().join(format!("{session_uuid}.jsonl")), &entries);
+    assert!(!links.contains_key(&tool_use_id));
+}
+
+#[test]
 fn excluded_entry_kinds_produce_no_lines() {
     // Summary, system, custom-title, file-history, agent-name
     // entries are inert — they render nothing and do not produce

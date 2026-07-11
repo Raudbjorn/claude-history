@@ -35,6 +35,7 @@ pub enum SemanticWorkerCommand {
         corpus_version: u64,
         scope_version: u64,
         prewarm: bool,
+        cancellation: SemanticCancellationToken,
     },
 }
 
@@ -45,6 +46,7 @@ struct SemanticSearchRequest {
     corpus_version: u64,
     scope_version: u64,
     prewarm: bool,
+    cancellation: SemanticCancellationToken,
 }
 
 pub enum SemanticSearchMessage {
@@ -95,12 +97,12 @@ fn run_semantic_worker(
 ) {
     let mut worker = SemanticWorkerState::default();
     let mut state = SemanticIndexState::new();
-    let mut cancellation = SemanticCancellationToken::new();
+    let mut active_cancellation = SemanticCancellationToken::new();
 
     while let Ok(command) = cmd_rx.recv() {
-        let mut request = worker.apply_command(command, &cancellation);
+        let mut request = worker.apply_command(command, &active_cancellation);
         while let Ok(pending) = cmd_rx.try_recv() {
-            if let Some(search) = worker.apply_command(pending, &cancellation) {
+            if let Some(search) = worker.apply_command(pending, &active_cancellation) {
                 request = Some(search);
             }
         }
@@ -120,7 +122,7 @@ fn run_semantic_worker(
             VersionState::Current => {}
         }
 
-        cancellation = SemanticCancellationToken::new();
+        active_cancellation = request.cancellation.clone();
         if request.query.is_effectively_empty() && !request.prewarm {
             let _ = res_tx.send(SemanticSearchMessage::Complete(SemanticSearchResponse {
                 generation: request.generation,
@@ -153,7 +155,7 @@ fn run_semantic_worker(
             corpus_version: request.corpus_version,
             prewarm: request.prewarm,
         };
-        let response = match state.has_chunks(&index_request, &cancellation) {
+        let response = match state.has_chunks(&index_request, &request.cancellation) {
             Ok(true) => {
                 if embedder.is_none() {
                     let _ = res_tx.send(SemanticSearchMessage::Progress {
@@ -180,14 +182,14 @@ fn run_semantic_worker(
                     &request.query,
                     &mut state,
                     embedder.as_mut().unwrap().as_mut(),
-                    &cancellation,
+                    &request.cancellation,
                     &res_tx,
                 )
                 .unwrap_or_else(|error| {
                     failed_semantic_response(request.generation, request.prewarm, error.to_string())
                 })
             }
-            Ok(false) => match state.clear_empty(&index_request, &cancellation) {
+            Ok(false) => match state.clear_empty(&index_request, &request.cancellation) {
                 Ok(()) => empty_semantic_response(request.generation, request.prewarm),
                 Err(error) => {
                     failed_semantic_response(request.generation, request.prewarm, error.to_string())
@@ -222,7 +224,7 @@ impl SemanticWorkerState {
     fn apply_command(
         &mut self,
         command: SemanticWorkerCommand,
-        cancellation: &SemanticCancellationToken,
+        active_cancellation: &SemanticCancellationToken,
     ) -> Option<SemanticSearchRequest> {
         match command {
             SemanticWorkerCommand::UpdateCorpus {
@@ -232,7 +234,7 @@ impl SemanticWorkerState {
                 if corpus_version >= self.corpus_version {
                     self.corpus_version = corpus_version;
                     self.corpus = conversations;
-                    cancellation.cancel();
+                    active_cancellation.cancel();
                 }
                 self.take_ready_pending()
             }
@@ -245,7 +247,7 @@ impl SemanticWorkerState {
                     self.scope_corpus_version = corpus_version;
                     self.scope_version = scope_version;
                     self.scope = indices;
-                    cancellation.cancel();
+                    active_cancellation.cancel();
                 }
                 self.take_ready_pending()
             }
@@ -255,14 +257,16 @@ impl SemanticWorkerState {
                 corpus_version,
                 scope_version,
                 prewarm,
+                cancellation,
             } => {
-                cancellation.cancel();
+                active_cancellation.cancel();
                 Some(SemanticSearchRequest {
                     generation,
                     query,
                     corpus_version,
                     scope_version,
                     prewarm,
+                    cancellation,
                 })
             }
         }
@@ -606,6 +610,7 @@ mod tests {
             corpus_version: 1,
             scope_version: 1,
             prewarm,
+            cancellation: SemanticCancellationToken::new(),
         })
         .expect("send semantic request");
     }
@@ -746,6 +751,7 @@ mod tests {
             corpus_version: 1,
             scope_version: 1,
             prewarm: false,
+            cancellation: SemanticCancellationToken::new(),
         })
         .expect("send semantic request");
 
@@ -836,6 +842,7 @@ mod tests {
             corpus_version: 1,
             scope_version: 1,
             prewarm: false,
+            cancellation: SemanticCancellationToken::new(),
         };
 
         assert!(matches!(

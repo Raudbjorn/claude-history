@@ -2,6 +2,7 @@ use super::{App, ListSearchMode, SemanticProgress, SemanticResultMetadata};
 use crate::history::{Conversation, format_short_name_from_path};
 use crate::search::query::ParsedQuery;
 use crate::search::{self, SearchableConversation};
+use crate::semantic::types::SemanticCancellationToken;
 use crate::tui::semantic_worker::{
     SemanticSearchMessage, SemanticWorkerCommand, spawn_semantic_worker,
 };
@@ -23,6 +24,7 @@ pub(super) struct SemanticSearchState {
     pub(super) results: HashMap<usize, SemanticResultMetadata>,
     pub(super) worker_tx: Option<mpsc::Sender<SemanticWorkerCommand>>,
     pub(super) worker_rx: Option<mpsc::Receiver<SemanticSearchMessage>>,
+    pub(super) cancellation: Option<SemanticCancellationToken>,
 }
 
 pub(super) enum SearchCommand {
@@ -137,6 +139,9 @@ pub(super) fn spawn_search_worker() -> (mpsc::Sender<SearchCommand>, mpsc::Recei
 
 impl App {
     pub(super) fn invalidate_search_generation(&mut self) {
+        if let Some(cancellation) = self.semantic_search.cancellation.take() {
+            cancellation.cancel();
+        }
         self.search_generation += 1;
         self.search_in_flight = false;
         self.lexical_evidence.clear();
@@ -160,6 +165,9 @@ impl App {
     }
 
     pub(super) fn rebuild_semantic_conversations_snapshot(&mut self) {
+        if let Some(cancellation) = &self.semantic_search.cancellation {
+            cancellation.cancel();
+        }
         self.semantic_conversations_snapshot = Arc::new(
             self.conversations
                 .iter()
@@ -268,6 +276,11 @@ impl App {
     }
 
     fn dispatch_semantic_search(&mut self, query: String, prewarm: bool) {
+        if let Some(previous) = self.semantic_search.cancellation.take() {
+            previous.cancel();
+        }
+        let cancellation = SemanticCancellationToken::new();
+        self.semantic_search.cancellation = Some(cancellation.clone());
         self.search_generation += 1;
         self.search_in_flight = false;
         self.semantic_search.pending_generation = Some(self.search_generation);
@@ -303,6 +316,7 @@ impl App {
             corpus_version,
             scope_version,
             prewarm,
+            cancellation: cancellation.clone(),
         }) {
             self.reset_semantic_worker();
             let Some((corpus_version, scope_version)) = self.send_semantic_state() else {
@@ -316,6 +330,7 @@ impl App {
                 corpus_version,
                 scope_version,
                 prewarm,
+                cancellation,
             }) {
                 self.semantic_search.error = Some("semantic worker unavailable".to_string());
                 self.semantic_search.pending_status = Some(SemanticProgress::Failed);

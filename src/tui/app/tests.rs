@@ -498,6 +498,7 @@ fn last_semantic_search(commands: &[SemanticWorkerCommand]) -> Option<(u64, &str
             corpus_version,
             scope_version,
             prewarm,
+            ..
         } => Some((
             *generation,
             query.raw(),
@@ -1824,4 +1825,44 @@ fn prewarm_completion_redispatches_after_restoring_worker_receiver() {
     assert!(!request.4);
     assert_eq!(app.semantic_search.pending_generation, Some(request.0));
     assert!(app.semantic_search.worker_rx.is_some());
+}
+
+#[test]
+fn newer_semantic_search_cancels_active_request_before_worker_dequeues_it() {
+    let mut app = app_with_semantic_mode(vec![conversation(
+        Some("Visible"),
+        "-tmp-visible",
+        "22222222-2222-4222-8222-222222222222",
+        "needle",
+    )]);
+    let (_request_tx, request_rx, _response_tx) = connect_semantic_search_channels(&mut app);
+    app.list_search_mode = ListSearchMode::Semantic;
+
+    app.query = "first".to_string();
+    app.dispatch_search();
+    let first_commands = drain_semantic_commands(&request_rx);
+    let first_cancellation = first_commands
+        .iter()
+        .find_map(|command| match command {
+            SemanticWorkerCommand::Search { cancellation, .. } => Some(cancellation.clone()),
+            _ => None,
+        })
+        .expect("first semantic search");
+    assert!(!first_cancellation.is_cancelled());
+
+    app.query = "second".to_string();
+    app.dispatch_search();
+    assert!(
+        first_cancellation.is_cancelled(),
+        "dispatching the newer query must interrupt active stale work"
+    );
+    let second_commands = drain_semantic_commands(&request_rx);
+    let second_cancellation = second_commands
+        .iter()
+        .find_map(|command| match command {
+            SemanticWorkerCommand::Search { cancellation, .. } => Some(cancellation),
+            _ => None,
+        })
+        .expect("second semantic search");
+    assert!(!second_cancellation.is_cancelled());
 }

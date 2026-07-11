@@ -13,10 +13,8 @@ use crate::claude::{self, AgentContent, ContentBlock, LogEntry, UserContent, Use
 use crate::tool_format;
 use crate::tui::parse_command_name_and_args;
 use chrono::Local;
-use std::fs::{self, File};
-#[cfg(target_os = "linux")]
-use std::io::Write as _;
-use std::io::{BufRead, BufReader};
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
@@ -64,6 +62,40 @@ pub struct ExportOptions {
     pub show_thinking: bool,
 }
 
+const MAX_EXPORT_NAME_ATTEMPTS: u32 = 1_000;
+
+fn write_unique_export(
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+    content: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    for suffix in 0..MAX_EXPORT_NAME_ATTEMPTS {
+        let filename = if suffix == 0 {
+            format!("{stem}.{extension}")
+        } else {
+            format!("{stem}-{suffix}.{extension}")
+        };
+        let path = directory.join(filename);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(content.as_bytes()) {
+                    let _ = fs::remove_file(&path);
+                    return Err(error);
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "no unique export filename available",
+    ))
+}
+
 /// Export conversation to file
 pub fn export_to_file(
     source_path: &Path,
@@ -72,7 +104,7 @@ pub fn export_to_file(
 ) -> ExportResult {
     let timestamp = Local::now().format("%Y-%m-%d-%H%M%S");
     let ext = format.extension();
-    let filename = format!("conversation-{}.{}", timestamp, ext);
+    let stem = format!("conversation-{timestamp}");
 
     let content = match generate_content(source_path, format, options) {
         Ok(c) => c,
@@ -83,9 +115,12 @@ pub fn export_to_file(
         }
     };
 
-    match fs::write(&filename, &content) {
-        Ok(_) => ExportResult {
-            message: format!("Exported to {}", filename),
+    match write_unique_export(Path::new("."), &stem, ext, &content) {
+        Ok(path) => ExportResult {
+            message: format!(
+                "Exported to {}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ),
         },
         Err(e) => ExportResult {
             message: format!("Failed to write: {}", e),
@@ -841,5 +876,18 @@ mod tests {
             "Long text should wrap to multiple lines, got: {:?}",
             content_lines
         );
+    }
+
+    #[test]
+    fn repeated_export_names_get_numeric_suffixes_without_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = write_unique_export(temp.path(), "conversation-fixed", "txt", "first").unwrap();
+        let second =
+            write_unique_export(temp.path(), "conversation-fixed", "txt", "second").unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "conversation-fixed.txt");
+        assert_eq!(second.file_name().unwrap(), "conversation-fixed-1.txt");
+        assert_eq!(fs::read_to_string(first).unwrap(), "first");
+        assert_eq!(fs::read_to_string(second).unwrap(), "second");
     }
 }
