@@ -24,7 +24,7 @@ impl FastembedEmbedder {
         cache_dir: PathBuf,
         show_download_progress: bool,
     ) -> Result<Self> {
-        let init_options = InitOptions::new(EmbeddingModel::BGEBaseENV15)
+        let init_options = InitOptions::new(EmbeddingModel::NomicEmbedTextV15)
             .with_cache_dir(cache_dir)
             .with_show_download_progress(show_download_progress);
         let model = TextEmbedding::try_new(init_options)
@@ -49,12 +49,12 @@ impl SemanticEmbedder for FastembedEmbedder {
     }
 }
 fn prefixed_query(query: &str) -> String {
-    format!("query: {query}")
+    format!("search_query: {query}")
 }
 fn prefixed_passages(passages: &[String]) -> Vec<String> {
     passages
         .iter()
-        .map(|passage| format!("passage: {passage}"))
+        .map(|passage| format!("search_document: {passage}"))
         .collect()
 }
 
@@ -63,16 +63,19 @@ mod tests {
     use super::{prefixed_passages, prefixed_query};
 
     #[test]
-    fn prefixed_query_adds_query_prefix() {
-        assert_eq!(prefixed_query("hello"), "query: hello");
-        assert_eq!(prefixed_query(""), "query: ");
+    fn prefixed_query_adds_search_query_prefix() {
+        assert_eq!(prefixed_query("hello"), "search_query: hello");
+        assert_eq!(prefixed_query(""), "search_query: ");
     }
 
     #[test]
-    fn prefixed_passages_adds_passage_prefix() {
+    fn prefixed_passages_adds_search_document_prefix() {
         assert_eq!(
             prefixed_passages(&["a".into(), "b".into()]),
-            vec!["passage: a".to_string(), "passage: b".to_string()]
+            vec![
+                "search_document: a".to_string(),
+                "search_document: b".to_string()
+            ]
         );
         assert_eq!(prefixed_passages(&[]), Vec::<String>::new());
     }
