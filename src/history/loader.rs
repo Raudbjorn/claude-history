@@ -39,10 +39,18 @@ pub struct EmptyTranscript {
     pub preview: Option<String>,
 }
 
+#[derive(Debug)]
+enum TranscriptScan {
+    Candidate(EmptyTranscript),
+    HasAssistant,
+    Unparsable,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DeleteEmptySummary {
     pub candidates: Vec<EmptyTranscript>,
     pub deleted: usize,
+    pub skipped_unparsable: usize,
 }
 
 /// Load conversations from ALL projects globally
@@ -398,7 +406,7 @@ pub fn delete_empty_transcripts(
     scope: DeleteEmptyScope,
     delete: bool,
 ) -> Result<DeleteEmptySummary> {
-    let candidates = find_empty_transcripts(scope)?;
+    let (candidates, skipped_unparsable) = find_empty_transcripts(scope)?;
     let mut deleted = 0;
 
     if delete {
@@ -417,10 +425,11 @@ pub fn delete_empty_transcripts(
     Ok(DeleteEmptySummary {
         candidates,
         deleted,
+        skipped_unparsable,
     })
 }
 
-fn find_empty_transcripts(scope: DeleteEmptyScope) -> Result<Vec<EmptyTranscript>> {
+fn find_empty_transcripts(scope: DeleteEmptyScope) -> Result<(Vec<EmptyTranscript>, usize)> {
     let root = super::get_claude_projects_root()?;
     if !root.exists() {
         return Err(AppError::ProjectsDirNotFound(root.display().to_string()));
@@ -433,7 +442,7 @@ fn find_empty_transcripts(scope: DeleteEmptyScope) -> Result<Vec<EmptyTranscript
             let project_dir_name = super::convert_path_to_project_dir_name(&current_dir);
             let project_dir = root.join(&project_dir_name);
             if !project_dir.exists() {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), 0));
             }
             vec![Project {
                 name: project_dir_name,
@@ -443,7 +452,7 @@ fn find_empty_transcripts(scope: DeleteEmptyScope) -> Result<Vec<EmptyTranscript
         }
     };
 
-    let mut candidates: Vec<EmptyTranscript> = projects
+    let scans: Vec<TranscriptScan> = projects
         .par_iter()
         .flat_map(|project| {
             let project_dir = root.join(&project.name);
@@ -462,25 +471,39 @@ fn find_empty_transcripts(scope: DeleteEmptyScope) -> Result<Vec<EmptyTranscript
                         return None;
                     }
 
-                    empty_transcript_from_path(&path, &project.display_name)
-                        .ok()
-                        .flatten()
+                    Some(
+                        match empty_transcript_from_path(&path, &project.display_name) {
+                            Ok(scan) => scan,
+                            Err(_) => TranscriptScan::Unparsable,
+                        },
+                    )
                 })
                 .collect::<Vec<_>>()
         })
         .collect();
 
+    let mut candidates = Vec::new();
+    let mut skipped_unparsable = 0;
+    for scan in scans {
+        match scan {
+            TranscriptScan::Candidate(transcript) => candidates.push(transcript),
+            TranscriptScan::HasAssistant => {}
+            TranscriptScan::Unparsable => skipped_unparsable += 1,
+        }
+    }
+
     candidates.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(candidates)
+    Ok((candidates, skipped_unparsable))
 }
 
-fn empty_transcript_from_path(path: &Path, project_name: &str) -> Result<Option<EmptyTranscript>> {
+fn empty_transcript_from_path(path: &Path, project_name: &str) -> Result<TranscriptScan> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut line_count = 0;
     let mut user_messages = 0;
     let mut assistant_messages = 0;
     let mut preview = None;
+    let mut parse_failures = 0;
 
     for line in reader.lines() {
         let line = line?;
@@ -491,7 +514,10 @@ fn empty_transcript_from_path(path: &Path, project_name: &str) -> Result<Option<
 
         let entry = match serde_json::from_str::<LogEntry>(&line) {
             Ok(entry) => entry,
-            Err(_) => continue,
+            Err(_) => {
+                parse_failures += 1;
+                continue;
+            }
         };
 
         match entry {
@@ -525,7 +551,11 @@ fn empty_transcript_from_path(path: &Path, project_name: &str) -> Result<Option<
     }
 
     if assistant_messages > 0 {
-        return Ok(None);
+        return Ok(TranscriptScan::HasAssistant);
+    }
+
+    if parse_failures > 0 {
+        return Ok(TranscriptScan::Unparsable);
     }
 
     let session_id = path
@@ -534,7 +564,7 @@ fn empty_transcript_from_path(path: &Path, project_name: &str) -> Result<Option<
         .unwrap_or_default()
         .to_owned();
 
-    Ok(Some(EmptyTranscript {
+    Ok(TranscriptScan::Candidate(EmptyTranscript {
         path: path.to_owned(),
         session_id,
         project_name: project_name.to_owned(),
@@ -873,9 +903,11 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":"<command-name>/status</command-name>"}}"#,
         ]);
 
-        let transcript = empty_transcript_from_path(file.path(), "project")
-            .unwrap()
-            .expect("user-only transcript should be empty");
+        let TranscriptScan::Candidate(transcript) =
+            empty_transcript_from_path(file.path(), "project").unwrap()
+        else {
+            panic!("user-only transcript should be empty");
+        };
 
         assert_eq!(transcript.user_messages, 1);
         assert_eq!(transcript.line_count, 1);
@@ -895,20 +927,46 @@ mod tests {
 
         let transcript = empty_transcript_from_path(file.path(), "project").unwrap();
 
-        assert!(transcript.is_none());
+        assert!(matches!(transcript, TranscriptScan::HasAssistant));
     }
 
     #[test]
     fn empty_transcript_includes_metadata_only_file() {
         let file = write_transcript(&[r#"{"type":"summary","summary":"Only metadata"}"#]);
 
-        let transcript = empty_transcript_from_path(file.path(), "project")
-            .unwrap()
-            .expect("metadata-only transcript should be empty");
+        let TranscriptScan::Candidate(transcript) =
+            empty_transcript_from_path(file.path(), "project").unwrap()
+        else {
+            panic!("metadata-only transcript should be empty");
+        };
 
         assert_eq!(transcript.user_messages, 0);
         assert_eq!(transcript.line_count, 1);
         assert_eq!(transcript.preview, None);
+    }
+
+    #[test]
+    fn unparsable_line_excludes_transcript_from_deletion() {
+        let file = write_transcript(&[
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
+            "not json {",
+        ]);
+
+        let scan = empty_transcript_from_path(file.path(), "project").unwrap();
+
+        assert!(matches!(scan, TranscriptScan::Unparsable));
+    }
+
+    #[test]
+    fn parse_failures_with_assistant_message_classify_as_non_empty() {
+        let file = write_transcript(&[
+            "not json {",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}"#,
+        ]);
+
+        let scan = empty_transcript_from_path(file.path(), "project").unwrap();
+
+        assert!(matches!(scan, TranscriptScan::HasAssistant));
     }
 
     #[test]

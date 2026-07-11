@@ -4,40 +4,40 @@ use crate::semantic::types::{
     EmbeddedChunk, SemanticChunkIdentity, SemanticExplanation, SemanticHit, SemanticQuality,
     SemanticRationaleKind, SemanticScoreBreakdown,
 };
+use std::borrow::Borrow;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::HashSet;
 
-pub fn rank_chunks(
+pub fn rank_chunks<C: Borrow<EmbeddedChunk>>(
     query: &str,
     query_embedding: &[f32],
-    chunks: &[EmbeddedChunk],
+    chunks: &[C],
     cancellation: &crate::semantic::types::SemanticCancellationToken,
 ) -> Result<Vec<SemanticHit>> {
-    let mut best_by_conversation: HashMap<usize, SemanticHit> = HashMap::new();
-    for hit in rank_chunk_hits(query, query_embedding, chunks, cancellation)? {
-        let replace = best_by_conversation
-            .get(&hit.conversation_index)
-            .is_none_or(|existing| compare_hits(&hit, existing).is_lt());
-        if replace {
-            best_by_conversation.insert(hit.conversation_index, hit);
-        }
-    }
-
-    let mut hits: Vec<_> = best_by_conversation.into_values().collect();
-    hits.sort_by(compare_hits);
-    Ok(hits)
+    let chunk_hits = rank_chunk_hits(query, query_embedding, chunks, cancellation)?;
+    Ok(best_hits_per_conversation(&chunk_hits))
 }
 
-pub fn rank_chunk_hits(
+pub fn rank_chunk_hits<C: Borrow<EmbeddedChunk>>(
     query: &str,
     query_embedding: &[f32],
-    chunks: &[EmbeddedChunk],
+    chunks: &[C],
     cancellation: &crate::semantic::types::SemanticCancellationToken,
 ) -> Result<Vec<SemanticHit>> {
     let mut hits = Vec::new();
     for chunk in chunks {
+        let chunk = chunk.borrow();
         if cancellation.is_cancelled() {
             return Err(AppError::SemanticSearchCancelled);
+        }
+        if chunk.embedding.len() != query_embedding.len() {
+            return Err(AppError::SemanticSearch(format!(
+                "embedding dimension mismatch: query has {} dims, chunk {}:{} has {}",
+                query_embedding.len(),
+                chunk.session,
+                chunk.chunk_index,
+                chunk.embedding.len()
+            )));
         }
         let semantic_score = cosine(query_embedding, &chunk.embedding);
         let lexical_score = lexical_overlap(query, &chunk.text);
@@ -65,6 +65,17 @@ pub fn rank_chunk_hits(
     }
     hits.sort_by(compare_hits);
     Ok(hits)
+}
+
+/// `chunk_hits` must already be sorted by `compare_hits` (as returned by
+/// `rank_chunk_hits`); the first hit per conversation is that conversation's best.
+pub fn best_hits_per_conversation(chunk_hits: &[SemanticHit]) -> Vec<SemanticHit> {
+    let mut seen = HashSet::new();
+    chunk_hits
+        .iter()
+        .filter(|hit| seen.insert(hit.conversation_index))
+        .cloned()
+        .collect()
 }
 
 fn compare_hits(a: &SemanticHit, b: &SemanticHit) -> Ordering {
@@ -191,6 +202,29 @@ mod tests {
     }
 
     #[test]
+    fn best_hits_per_conversation_keeps_first_sorted_hit_per_conversation() {
+        let chunks = vec![
+            embedded("session-a", 0, 0, "exact match", vec![1.0, 0.0]),
+            embedded("session-b", 1, 0, "partial", vec![0.8, 0.2]),
+            embedded("session-a", 0, 1, "weak", vec![0.0, 1.0]),
+        ];
+        let sorted = rank_chunk_hits(
+            "exact match",
+            &[1.0, 0.0],
+            &chunks,
+            &SemanticCancellationToken::new(),
+        )
+        .unwrap();
+
+        let best = best_hits_per_conversation(&sorted);
+
+        assert_eq!(best.len(), 2);
+        assert_eq!(best[0].conversation_index, 0);
+        assert_eq!(best[0].chunk_index, 0);
+        assert_eq!(best[1].conversation_index, 1);
+    }
+
+    #[test]
     fn ranking_preserves_message_range() {
         let chunks = vec![embedded(
             "session-a",
@@ -235,6 +269,27 @@ mod tests {
 
         assert_eq!(hits[0].session, "session-a");
         assert_eq!(hits[0].semantic_score, 1.0);
+    }
+
+    #[test]
+    fn query_chunk_dimension_mismatch_errors() {
+        let chunks = vec![embedded(
+            "session-a",
+            0,
+            0,
+            "same words",
+            vec![1.0, 0.0, 0.5],
+        )];
+
+        let error = rank_chunks(
+            "same words",
+            &[1.0, 0.0],
+            &chunks,
+            &SemanticCancellationToken::new(),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("dimension mismatch"));
     }
 
     #[test]

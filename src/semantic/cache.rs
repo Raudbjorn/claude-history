@@ -34,6 +34,7 @@ pub fn embed_chunks_with_progress_and_save(
             misses.push(chunk);
         }
     }
+    let mut expected_dim = embedded.first().map(|chunk| chunk.embedding.len());
 
     let total_misses = misses.len();
     let mut completed = 0;
@@ -46,8 +47,25 @@ pub fn embed_chunks_with_progress_and_save(
             .map(|chunk| chunk.text.clone())
             .collect::<Vec<_>>();
         let embeddings = embedder.embed_passages(&texts)?;
+        if embeddings.len() != texts.len() {
+            return Err(AppError::SemanticSearch(format!(
+                "embedder returned {} embeddings for {} passages",
+                embeddings.len(),
+                texts.len()
+            )));
+        }
 
         for (chunk, embedding) in batch.iter().cloned().zip(embeddings) {
+            match expected_dim {
+                Some(dim) if embedding.len() != dim => {
+                    return Err(AppError::SemanticSearch(format!(
+                        "embedding dimension mismatch: expected {dim}, got {}",
+                        embedding.len()
+                    )));
+                }
+                None => expected_dim = Some(embedding.len()),
+                _ => {}
+            }
             let metadata = chunk.metadata.unwrap_or_default();
             let key = chunk.key;
             cache.entries.insert(
@@ -277,6 +295,34 @@ mod tests {
         }
     }
 
+    struct ShortEmbedder;
+
+    impl SemanticEmbedder for ShortEmbedder {
+        fn embed_passages(&mut self, passages: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(passages
+                .iter()
+                .take(passages.len().saturating_sub(1))
+                .map(|_| vec![1.0, 0.0])
+                .collect())
+        }
+
+        fn embed_query(&mut self, _query: &str) -> Result<Option<Vec<f32>>> {
+            Ok(Some(vec![1.0, 0.0]))
+        }
+    }
+
+    struct MismatchedDimensionEmbedder;
+
+    impl SemanticEmbedder for MismatchedDimensionEmbedder {
+        fn embed_passages(&mut self, _passages: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(vec![vec![1.0, 0.0], vec![1.0]])
+        }
+
+        fn embed_query(&mut self, _query: &str) -> Result<Option<Vec<f32>>> {
+            Ok(Some(vec![1.0, 0.0]))
+        }
+    }
+
     fn metadata() -> FileMetadata {
         FileMetadata {
             file_size: 10,
@@ -356,6 +402,41 @@ mod tests {
         assert_eq!(embedded[0].embedding, vec![8.0, 1.0]);
         assert_eq!(embedded[0].chunk_index, 0);
         assert!(cache.entries.contains_key("session:0"));
+    }
+
+    #[test]
+    fn short_embedding_batch_returns_error() {
+        let mut cache = empty_embedding_cache(ChunkConfig::default());
+        let error = embed_chunks_with_progress_and_save(
+            &mut ShortEmbedder,
+            vec![chunk("session:0", "first"), chunk("session:1", "second")],
+            &mut cache,
+            &SemanticCancellationToken::new(),
+            |_, _| {},
+            |_| {},
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("embeddings for"));
+        assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn mismatched_embedding_dimension_returns_error() {
+        let mut cache = empty_embedding_cache(ChunkConfig::default());
+        let error = embed_chunks_with_progress_and_save(
+            &mut MismatchedDimensionEmbedder,
+            vec![chunk("session:0", "first"), chunk("session:1", "second")],
+            &mut cache,
+            &SemanticCancellationToken::new(),
+            |_, _| {},
+            |_| {},
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("dimension mismatch"));
+        assert!(cache.entries.contains_key("session:0"));
+        assert!(!cache.entries.contains_key("session:1"));
     }
 
     #[test]

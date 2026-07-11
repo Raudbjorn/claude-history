@@ -655,7 +655,7 @@ fn expand_tabs(input: &str, start_col: usize, tab_width: usize) -> String {
 }
 
 /// Render a table as layout lines with box-drawing characters.
-fn render_table_to_lines(rows: &[Vec<String>], _max_width: usize) -> Vec<Line> {
+fn render_table_to_lines(rows: &[Vec<String>], max_width: usize) -> Vec<Line> {
     if rows.is_empty() {
         return vec![];
     }
@@ -669,6 +669,23 @@ fn render_table_to_lines(rows: &[Vec<String>], _max_width: usize) -> Vec<Line> {
                 col_widths[i] = col_widths[i].max(cell.trim().width());
             }
         }
+    }
+    for width in &mut col_widths {
+        *width = (*width).max(1);
+    }
+
+    let available = max_width.saturating_sub(num_cols + 1 + 2 * num_cols);
+    while col_widths.iter().sum::<usize>() > available {
+        let mut widest = 0;
+        for index in 1..col_widths.len() {
+            if col_widths[index] > col_widths[widest] {
+                widest = index;
+            }
+        }
+        if col_widths.get(widest).copied().unwrap_or(1) <= 1 {
+            break;
+        }
+        col_widths[widest] -= 1;
     }
 
     let h = '─';
@@ -712,32 +729,51 @@ fn render_table_to_lines(rows: &[Vec<String>], _max_width: usize) -> Vec<Line> {
     });
 
     for (row_idx, row) in rows.iter().enumerate() {
-        // Row content
-        let mut runs = Vec::new();
-        runs.push(Run {
-            text: v.to_string(),
-            attrs: border_attrs.clone(),
-        });
-        for (i, width) in col_widths.iter().enumerate() {
-            let cell = row.get(i).map(|s| s.trim()).unwrap_or("");
-            let cell_width = cell.width();
-            let padding = width.saturating_sub(cell_width);
-            runs.push(Run {
-                text: format!(" {} ", cell),
-                attrs: Attrs::default(),
-            });
-            if padding > 0 {
-                runs.push(Run {
-                    text: " ".repeat(padding),
-                    attrs: Attrs::default(),
-                });
-            }
+        let wrapped = col_widths
+            .iter()
+            .enumerate()
+            .map(|(i, &width)| {
+                let cell = row.get(i).map(|s| s.trim()).unwrap_or("");
+                let lines = textwrap::wrap(cell, width)
+                    .into_iter()
+                    .map(|line| line.into_owned())
+                    .collect::<Vec<_>>();
+                if lines.is_empty() {
+                    vec![String::new()]
+                } else {
+                    lines
+                }
+            })
+            .collect::<Vec<_>>();
+        let row_height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+
+        for visual_row in 0..row_height {
+            let mut runs = Vec::new();
             runs.push(Run {
                 text: v.to_string(),
                 attrs: border_attrs.clone(),
             });
+            for (i, width) in col_widths.iter().enumerate() {
+                let cell = wrapped[i].get(visual_row).map(String::as_str).unwrap_or("");
+                let cell_width = cell.width();
+                let padding = width.saturating_sub(cell_width);
+                runs.push(Run {
+                    text: format!(" {} ", cell),
+                    attrs: Attrs::default(),
+                });
+                if padding > 0 {
+                    runs.push(Run {
+                        text: " ".repeat(padding),
+                        attrs: Attrs::default(),
+                    });
+                }
+                runs.push(Run {
+                    text: v.to_string(),
+                    attrs: border_attrs.clone(),
+                });
+            }
+            lines.push(Line { runs });
         }
-        lines.push(Line { runs });
 
         // Separator
         if row_idx < rows.len() - 1 {
@@ -853,5 +889,48 @@ mod tests {
         );
         let rejoined: String = result.lines().collect();
         assert!(rejoined.contains(&"x".repeat(50)));
+    }
+
+    #[test]
+    fn narrow_table_lines_stay_within_max_width() {
+        let input = "| First column | Second column |\n| --- | --- |\n| This cell contains a DISTINCTIVE word after substantial padding | Another cell with more than forty characters of content |";
+
+        let result = render_to_text(input, 30);
+
+        assert!(
+            result
+                .lines()
+                .all(|line| UnicodeWidthStr::width(line) <= 30)
+        );
+        assert!(result.contains("DISTINCTIVE"));
+    }
+
+    #[test]
+    fn wide_cells_wrap_across_rows_between_separators() {
+        let input = "| Header one | Header two |\n| --- | --- |\n| This logical row must wrap across several visual rows | Another deliberately long table cell |";
+
+        let result = render_to_text(input, 28);
+        let lines = result.lines().collect::<Vec<_>>();
+        let separator = lines
+            .iter()
+            .position(|line| line.starts_with('├'))
+            .expect("table separator");
+        let bottom = lines
+            .iter()
+            .position(|line| line.starts_with('└'))
+            .expect("bottom border");
+
+        assert!(
+            lines[separator + 1..bottom]
+                .iter()
+                .filter(|line| line.starts_with('│'))
+                .count()
+                > 1
+        );
+        assert!(
+            lines[separator + 1..bottom]
+                .iter()
+                .all(|line| !line.starts_with('├'))
+        );
     }
 }

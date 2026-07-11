@@ -24,6 +24,7 @@ pub fn build_chunks_with_sources<'a, I>(conversations: I, config: ChunkConfig) -
 where
     I: IntoIterator<Item = (usize, SemanticChunkSource, &'a Conversation)>,
 {
+    let config = config.sanitized();
     let mut chunks = Vec::new();
     for (conversation_index, source, conversation) in conversations {
         let semantic_turns = conversation
@@ -205,11 +206,19 @@ fn split_chunk(text: &str, config: ChunkConfig) -> (&str, &str) {
         return (text, "");
     }
 
-    let end = floor_char_boundary(text, config.target_chars);
+    let mut end = floor_char_boundary(text, config.target_chars);
+    if end == 0 {
+        // Always consume at least one full scalar so the caller's loop advances.
+        end = text.chars().next().map_or(text.len(), char::len_utf8);
+    }
     let chunk = &text[..end];
-    let next_start = end.saturating_sub(config.overlap_chars);
-    let next_start = floor_char_boundary(text, next_start);
-    (chunk, text[next_start..].trim_start())
+    let next_start = floor_char_boundary(text, end.saturating_sub(config.overlap_chars));
+    let mut rest = text[next_start..].trim_start();
+    if rest.len() >= text.len() {
+        // Overlap swallowed all progress; drop the overlap for this step.
+        rest = text[end..].trim_start();
+    }
+    (chunk, rest)
 }
 
 fn floor_char_boundary(text: &str, index: usize) -> usize {
@@ -377,6 +386,74 @@ mod tests {
         assert_eq!(chunks[0].text, "éaé");
         assert_eq!(chunks[1].text, "ébé");
         assert!(chunks[1].text.starts_with("é"));
+    }
+
+    #[test]
+    fn split_chunk_advances_on_multibyte_with_tiny_target() {
+        let config = ChunkConfig {
+            target_chars: 1,
+            overlap_chars: 0,
+            context_turns: 0,
+        };
+        let text = "ééé";
+        let mut rest = text;
+        let mut iterations = 0;
+
+        while !rest.is_empty() {
+            let (chunk, next) = split_chunk(rest, config);
+            assert!(!chunk.is_empty());
+            iterations += 1;
+            assert!(iterations <= text.len(), "split_chunk did not advance");
+            rest = next;
+        }
+    }
+
+    #[test]
+    fn split_long_text_terminates_when_overlap_reaches_target() {
+        let text = "abcdefghij".repeat(10);
+        let config = ChunkConfig {
+            target_chars: 10,
+            overlap_chars: 10,
+            context_turns: 0,
+        };
+        let mut chunks = Vec::new();
+
+        split_long_text(&text, MessageRange::single(1), &mut chunks, config);
+
+        let combined = chunks
+            .iter()
+            .map(|chunk| chunk.text.as_str())
+            .collect::<String>();
+        assert!(combined.contains(&text[..10]));
+        assert!(combined.contains(&text[text.len() - 10..]));
+    }
+
+    #[test]
+    fn chunk_config_sanitized_clamps_invalid_values() {
+        let invalid = ChunkConfig {
+            target_chars: 0,
+            overlap_chars: 5,
+            context_turns: 2,
+        }
+        .sanitized();
+        assert_eq!(invalid.target_chars, 1);
+        assert_eq!(invalid.overlap_chars, 0);
+        assert_eq!(invalid.context_turns, 2);
+
+        let full_overlap = ChunkConfig {
+            target_chars: 10,
+            overlap_chars: 10,
+            context_turns: 3,
+        }
+        .sanitized();
+        assert_eq!(full_overlap.overlap_chars, 9);
+
+        let valid = ChunkConfig {
+            target_chars: 10,
+            overlap_chars: 4,
+            context_turns: 1,
+        };
+        assert_eq!(valid.sanitized(), valid);
     }
 
     #[test]
