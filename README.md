@@ -42,21 +42,13 @@ discover the matching transcript folder automatically.
 cargo install claude-history
 ```
 
-Semantic search uses the system Python installation and requires
-[`fastembed`](https://github.com/qdrant/fastembed) 0.8 or newer. On Arch Linux,
-install it before running or installing this project:
-
-```sh
-paru -S python-fastembed
-```
+> **Note:** Semantic search downloads the BGE-small-en-v1.5 model (~130 MB) to `~/.cache/claude-history/semantic/fastembed` on first run. No Python installation is required.
 
 ## Updating
 
 ```sh
 claude-history update
 ```
-
-## Usage
 
 Run the tool from inside the project directory you're interested in:
 
