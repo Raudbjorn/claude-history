@@ -661,6 +661,7 @@ pub fn load_conversations(
     let mut dirty = false;
     let mut conversations: Vec<Conversation> = Vec::with_capacity(files_with_meta.len());
     let mut files_to_parse: Vec<(PathBuf, Option<SystemTime>, u64)> = Vec::new();
+    let mut empty_cache_hits: Vec<(String, u64, SystemTime)> = Vec::new();
 
     for (path, modified, file_size) in &files_with_meta {
         let filename = path
@@ -675,6 +676,7 @@ pub fn load_conversations(
             if entry.is_empty {
                 // Negative cache hit — file was previously parsed and yielded nothing
                 debug::debug(debug_level, &format!("Cache hit (empty) {}", filename));
+                empty_cache_hits.push((filename.to_owned(), *file_size, *mtime));
             } else {
                 let conv = cache::conversation_from_entry(entry, path.clone(), show_last);
                 debug::debug(
@@ -800,6 +802,13 @@ pub fn load_conversations(
             {
                 new_cache.insert(filename.to_owned(), cache::empty_entry(*file_size, *mtime));
             }
+        }
+
+        // Preserve negative cache entries for unchanged files that were negative
+        // cache hits this run; the rebuild would otherwise drop them and force a
+        // pointless reparse on the next load.
+        for (filename, file_size, mtime) in &empty_cache_hits {
+            new_cache.insert(filename.clone(), cache::empty_entry(*file_size, *mtime));
         }
 
         cache::write_project_cache(project_dir_name, new_cache);
@@ -982,5 +991,42 @@ mod tests {
         assert!(conversations.is_empty());
         let cache = cache::read_project_cache(&project_name).unwrap_or_default();
         assert!(!cache.contains_key("broken.jsonl"));
+    }
+
+    #[test]
+    fn negative_cache_entries_survive_unrelated_cache_rewrites() {
+        let project_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project_dir.path().join("empty.jsonl"),
+            r#"{"type":"summary","summary":"metadata only"}"#,
+        )
+        .unwrap();
+        let project_name = format!(
+            "test-loader-negative-cache-{}",
+            project_dir.path().file_name().unwrap().to_string_lossy()
+        );
+        let _cache_cleanup = ProjectCacheCleanup::new(project_name.clone());
+
+        load_conversations(project_dir.path(), false, &project_name, None).unwrap();
+        let cache = cache::read_project_cache(&project_name).unwrap_or_default();
+        assert!(
+            cache.contains_key("empty.jsonl"),
+            "first load writes the negative entry"
+        );
+
+        // A new unrelated file forces a cache rewrite; the negative entry must survive.
+        std::fs::write(
+            project_dir.path().join("real.jsonl"),
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}",
+        )
+        .unwrap();
+        load_conversations(project_dir.path(), false, &project_name, None).unwrap();
+
+        let cache = cache::read_project_cache(&project_name).unwrap_or_default();
+        assert!(
+            cache.contains_key("empty.jsonl"),
+            "negative entry survives the rewrite"
+        );
+        assert!(cache.contains_key("real.jsonl"));
     }
 }

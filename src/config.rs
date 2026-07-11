@@ -117,6 +117,13 @@ mode = "vector"
     }
 
     #[test]
+    fn parses_non_ascii_single_char_binding() {
+        let binding = parse_key_binding("é").unwrap();
+        assert_eq!(binding.code, KeyCode::Char('é'));
+        assert_eq!(binding.modifiers, KeyModifiers::NONE);
+    }
+
+    #[test]
     fn applies_rename_key_config() {
         let keys = KeyBindings::from_config(Some(KeysConfig {
             rename: Some(parse_key_binding("alt+r").unwrap()),
@@ -205,7 +212,7 @@ impl<'de> Deserialize<'de> for KeyBinding {
 
 fn parse_key_code(key: &str) -> std::result::Result<KeyCode, String> {
     match key.to_lowercase().as_str() {
-        k if k.len() == 1 => Ok(KeyCode::Char(k.chars().next().unwrap())),
+        k if k.chars().count() == 1 => Ok(KeyCode::Char(k.chars().next().unwrap())),
         k if k.starts_with('f') => {
             let number = k[1..]
                 .parse::<u8>()
