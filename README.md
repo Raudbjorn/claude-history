@@ -16,8 +16,7 @@ discover the matching transcript folder automatically.
 > history with the bounded `agent` protocol. See [Agent protocol](#agent-protocol)
 > for the CLI workflow and skill path.
 
-[Install](#install) · [Features](#features) · [Usage](#usage) ·
-[Configuration](#configuration) · [Changelog](CHANGELOG.md)
+[Install](#install) · [Features](#features) · [Configuration](#configuration) · [Changelog](CHANGELOG.md)
 
 ## Features
 
