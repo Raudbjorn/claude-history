@@ -340,7 +340,17 @@ pub fn run_global_lexical_search(
         let Some(key) = key_by_path.get(&conversation.path) else {
             continue;
         };
-        let transcript = load_transcript(key)?;
+        let transcript = match load_transcript(key) {
+            Ok(transcript) => transcript,
+            Err(error) => {
+                eprintln!(
+                    "[WARN] Skipping unreadable transcript {}: {}",
+                    key.path.display(),
+                    error
+                );
+                continue;
+            }
+        };
         transcripts_loaded += 1;
         let resolved = ResolvedConversation {
             key: key.clone(),
@@ -1569,5 +1579,49 @@ mod tests {
         assert_eq!(output.hits.len(), 3);
         assert_eq!(output.stats.shortlisted, 50);
         assert_eq!(output.stats.transcripts_loaded, 3);
+    }
+    #[test]
+    fn global_lexical_search_skips_unreadable_transcripts() {
+        let conversations = vec![
+            conversation("broken.jsonl", "needle title"),
+            conversation("valid.jsonl", "needle title"),
+        ];
+        let keys = conversations
+            .iter()
+            .map(|conversation| {
+                AgentConversationKey::new(
+                    "project-a",
+                    conversation.path.file_name().unwrap().to_string_lossy(),
+                    conversation.path.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let request = AgentSearchRequest {
+            query: "needle".to_string(),
+            top: 1,
+            _scope: AgentSearchScope::Global,
+            cli_mode: Some(SearchMode::Lexical),
+            config_mode: None,
+            tui_semantic_search: None,
+            flat: false,
+            hits_per_conversation: 1,
+            all_hits: false,
+        };
+
+        let output = run_global_lexical_search(&request, &conversations, &keys, &[0, 1], |key| {
+            if key.session_filename == "broken.jsonl" {
+                Err(AppError::ConfigError("transient read error".to_string()))
+            } else {
+                Ok(transcript(vec![message(
+                    1,
+                    AgentMessageRole::User,
+                    "needle evidence",
+                )]))
+            }
+        })
+        .unwrap();
+
+        assert_eq!(output.hits.len(), 1);
+        assert_eq!(output.stats.transcripts_loaded, 1);
     }
 }

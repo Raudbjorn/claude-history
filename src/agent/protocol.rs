@@ -142,7 +142,9 @@ pub fn format_outline(
 }
 
 pub fn escape_atom(value: &str) -> String {
-    let mut escaped = String::new();
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut escaped = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {
             b'A'..=b'Z'
@@ -155,7 +157,11 @@ pub fn escape_atom(value: &str) -> String {
             | b'/'
             | b'+'
             | b'-' => escaped.push(byte as char),
-            _ => escaped.push_str(&format!("%{byte:02X}")),
+            _ => {
+                escaped.push('%');
+                escaped.push(HEX[(byte >> 4) as usize] as char);
+                escaped.push(HEX[(byte & 0x0f) as usize] as char);
+            }
         }
     }
     escaped
@@ -935,5 +941,9 @@ mod tests {
             "output must start with the versioned header, got first 80 chars: {:?}",
             &output[..output.len().min(80)]
         );
+    }
+    #[test]
+    fn escape_atom_percent_encodes_utf8_without_per_byte_formatting() {
+        assert_eq!(escape_atom("你好 space"), "%E4%BD%A0%E5%A5%BD%20space");
     }
 }

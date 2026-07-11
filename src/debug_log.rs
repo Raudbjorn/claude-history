@@ -2,7 +2,9 @@ use crate::history::{Conversation, ParseError};
 use chrono::Local;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const MAX_DEBUG_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Get the debug log file path (~/.local/state/claude-history/debug.log)
 fn get_debug_log_path() -> Option<PathBuf> {
@@ -15,6 +17,24 @@ fn get_debug_log_path() -> Option<PathBuf> {
     )
 }
 
+fn rotate_debug_log(log_path: &Path, max_bytes: u64) -> std::io::Result<()> {
+    match fs::metadata(log_path) {
+        Ok(metadata) if metadata.len() > max_bytes => {
+            let backup_path = log_path.with_extension("log.1");
+            match fs::remove_file(&backup_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            fs::rename(log_path, backup_path)?;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
 fn open_debug_log_file() -> std::io::Result<Option<fs::File>> {
     let log_path = match get_debug_log_path() {
         Some(p) => p,
@@ -25,6 +45,8 @@ fn open_debug_log_file() -> std::io::Result<Option<fs::File>> {
         fs::create_dir_all(parent)?;
     }
 
+    rotate_debug_log(&log_path, MAX_DEBUG_LOG_BYTES)?;
+
     OpenOptions::new()
         .create(true)
         .append(true)
@@ -34,8 +56,8 @@ fn open_debug_log_file() -> std::io::Result<Option<fs::File>> {
 
 /// Log parse errors for a conversation to the debug log file.
 ///
-/// Only writes to the log if there are parse errors. The log is appended to,
-/// so errors accumulate over time for debugging.
+/// Only writes when parse errors exist. The log is appended for debugging and
+/// rotated to `debug.log.1` once it exceeds `MAX_DEBUG_LOG_BYTES`.
 pub fn log_parse_errors(conversation: &Conversation) -> std::io::Result<()> {
     if conversation.parse_errors.is_empty() {
         return Ok(());
@@ -152,4 +174,23 @@ pub fn log_display_error(
         writeln!(file, "---")?;
         writeln!(file)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotate_debug_log_replaces_existing_backup_above_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let log_path = temp.path().join("debug.log");
+        let backup_path = temp.path().join("debug.log.1");
+        fs::write(&log_path, b"oversized").unwrap();
+        fs::write(&backup_path, b"stale").unwrap();
+
+        rotate_debug_log(&log_path, 3).unwrap();
+
+        assert!(!log_path.exists());
+        assert_eq!(fs::read(backup_path).unwrap(), b"oversized");
+    }
 }

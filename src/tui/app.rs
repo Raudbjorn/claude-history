@@ -5,7 +5,6 @@ use crate::search::{self, SearchableConversation};
 use crate::semantic::types::{SemanticExplanation, SemanticScoreBreakdown};
 #[cfg(test)]
 use crate::tui::semantic_worker::{SemanticSearchMessage, SemanticWorkerCommand};
-#[cfg(test)]
 use crate::tui::ui;
 use crate::tui::viewer::ToolDisplayMode;
 #[cfg(test)]
@@ -394,7 +393,7 @@ impl App {
     pub fn finish_loading(&mut self) {
         // Sort all conversations by timestamp (newest first)
         self.conversations
-            .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            .sort_by_key(|conversation| std::cmp::Reverse(conversation.timestamp));
 
         // Reindex after sorting
         for (idx, conv) in self.conversations.iter_mut().enumerate() {
@@ -582,17 +581,9 @@ impl App {
             return false;
         }
 
-        // Mirror the layout in render_list_mode: outer 1px border, then split
-        // [search bar (2), list (Min 1), bottom bar (1)] — or omit the bottom
-        // bar when the inner area is < 4 lines tall.
-        let inner_height = frame_area.height.saturating_sub(2);
-        let list_y = frame_area.y.saturating_add(1).saturating_add(2);
-        let list_height = if inner_height < 4 {
-            inner_height.saturating_sub(2)
-        } else {
-            inner_height.saturating_sub(3)
-        };
-
+        let layout = ui::list_layout_rects(frame_area);
+        let list_y = layout.list.y;
+        let list_height = layout.list.height;
         if list_height == 0 || row < list_y || row >= list_y.saturating_add(list_height) {
             return false;
         }

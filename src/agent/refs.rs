@@ -351,9 +351,11 @@ fn parse_message_number(input: &str) -> Result<usize> {
             "invalid message ref {input}; expected mN"
         )));
     }
-    let parsed = number
-        .parse::<usize>()
-        .map_err(|_| AppError::ConfigError(format!("invalid message ref {input}; expected mN")))?;
+    let parsed = number.parse::<usize>().map_err(|_| {
+        AppError::ConfigError(format!(
+            "invalid message ref {input}: message number is too large"
+        ))
+    })?;
     if parsed == 0 {
         return Err(AppError::ConfigError(
             "message refs are 1-based".to_string(),
@@ -627,5 +629,11 @@ mod tests {
         let resolved_reads = vec![(reads[0].clone(), resolved)];
         validate_resolved_focus_in_ranges(&resolved_reads, &parse_focus_ref("m7").unwrap(), None)
             .expect("focus within range must succeed");
+    }
+    #[test]
+    fn oversized_message_number_has_specific_error() {
+        let input = format!("m{}0", usize::MAX);
+        let error = parse_message_number(&input).unwrap_err().to_string();
+        assert!(error.contains("message number is too large"), "{error}");
     }
 }

@@ -119,7 +119,7 @@ pub fn process_conversation_reader<R: BufRead>(
                         cwd,
                         timestamp,
                         ..
-                    } => {
+                    } => 'user: {
                         // Track timestamps for conversation duration
                         if let Some(ref ts_str) = timestamp
                             && let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_str)
@@ -141,7 +141,7 @@ pub fn process_conversation_reader<R: BufRead>(
                         let search_text = extract_search_text_from_user(&message);
 
                         if preview_text.is_empty() && search_text.is_empty() {
-                            continue;
+                            break 'user;
                         }
 
                         if !preview_text.is_empty() {
@@ -160,7 +160,7 @@ pub fn process_conversation_reader<R: BufRead>(
                                 if !search_text.is_empty() {
                                     all_parts.push(search_text);
                                 }
-                                continue;
+                                break 'user;
                             } else {
                                 preview_text
                             };
@@ -810,6 +810,26 @@ mod tests {
         assert_eq!(error.context_before.len(), 1);
         // Context after should have line 3
         assert_eq!(error.context_after.len(), 1);
+    }
+
+    #[test]
+    fn filtered_user_line_still_precedes_following_parse_error() {
+        let filtered = user_msg("<command-name>/clear</command-name>", None);
+        let content = [
+            user_msg("Before", None),
+            filtered.clone(),
+            "invalid json".to_string(),
+            assistant_msg("After"),
+        ]
+        .join("\n");
+
+        let conv = parse_jsonl(&content).unwrap().unwrap();
+        let error = &conv.parse_errors[0];
+        assert_eq!(error.line_number, 3);
+        assert_eq!(
+            error.context_before,
+            vec![user_msg("Before", None), filtered]
+        );
     }
 
     #[test]

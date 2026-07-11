@@ -423,12 +423,17 @@ fn step_tool_summary(
     let subagent_tool_use_id = summary.direct_subagent_id();
     let summary_output_id =
         subagent_tool_use_id.map(|_| make_tool_summary_output_id(ctx.entry_index, ctx.parent_id));
+    let summary_timing = if ctx.style.is_subagent {
+        timing.pad()
+    } else {
+        timing.consume()
+    };
     render_tool_activity_summary(
         lines,
         &ctx.style.label,
         th().accent_dim,
         ctx.style.is_subagent,
-        timing.consume(),
+        summary_timing,
         &summary,
         ToolActivitySummaryInteraction {
             tool_output_id: summary_output_id.as_ref(),
@@ -643,7 +648,11 @@ fn render_dimmed_tool_result_row(
 
 /// Get a truncated agent ID for display (max 7 characters)
 fn short_agent_id(agent_id: &str) -> &str {
-    &agent_id[..agent_id.len().min(7)]
+    let end = agent_id
+        .char_indices()
+        .nth(7)
+        .map_or(agent_id.len(), |(index, _)| index);
+    &agent_id[..end]
 }
 
 /// Render an agent (subagent) progress message by classifying the
@@ -689,5 +698,43 @@ fn render_agent_progress_message(
             render_agent_progress_assistant_message(lines, &ctx, timing, blocks);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_agent_id_truncates_at_unicode_boundary() {
+        assert_eq!(short_agent_id("你好世界abcd"), "你好世界abc");
+    }
+
+    #[test]
+    fn subagent_tool_summary_pads_parent_timestamp() {
+        let options = RenderOptions {
+            tool_display: ToolDisplayMode::Hidden,
+            show_thinking: true,
+            show_timing: true,
+            content_width: 80,
+            expanded_tool_outputs: std::collections::BTreeSet::new(),
+            subagent_link_ids: std::collections::HashSet::new(),
+        };
+        let ctx = EntryCtx {
+            style: MessageStyle::for_agent_assistant("agent"),
+            parent_id: Some("agent"),
+            entry_index: 0,
+            options: &options,
+        };
+        let blocks = vec![ContentBlock::ToolUse {
+            id: "toolu_1".to_string(),
+            name: "Grep".to_string(),
+            input: serde_json::json!({"pattern": "needle"}),
+        }];
+        let mut timing = RowTiming::new(true, Some("12:34"));
+        let mut lines = Vec::new();
+
+        assert!(step_tool_summary(&mut lines, &ctx, &mut timing, &blocks));
+        assert_eq!(lines[0].spans[0].0, " ".repeat(TIMESTAMP_WIDTH));
     }
 }

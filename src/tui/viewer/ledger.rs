@@ -242,6 +242,7 @@ pub(super) fn render_ledger_block_styled_dimmed(
         return;
     }
 
+    let continuation_timing = timing.continuation();
     for (i, styled_line) in styled_lines.iter().enumerate() {
         let name_col = if i == 0 {
             NameCol::Label {
@@ -265,7 +266,7 @@ pub(super) fn render_ledger_block_styled_dimmed(
         push_row(
             lines,
             LedgerRow {
-                timing,
+                timing: if i == 0 { timing } else { continuation_timing },
                 name: name_col,
                 separator_dimmed: true,
                 tool_output_id: None,
@@ -284,6 +285,7 @@ pub(super) fn render_ledger_block_plain_dimmed(
     text: &str,
     timing: TimingSlot<'_>,
 ) {
+    let continuation_timing = timing.continuation();
     for (i, line_text) in text.lines().enumerate() {
         let name_col = if i == 0 {
             NameCol::Label {
@@ -305,7 +307,7 @@ pub(super) fn render_ledger_block_plain_dimmed(
         push_row(
             lines,
             LedgerRow {
-                timing,
+                timing: if i == 0 { timing } else { continuation_timing },
                 name: name_col,
                 separator_dimmed: true,
                 tool_output_id: None,
@@ -342,5 +344,50 @@ pub(super) fn render_continuation_dimmed(
             },
             content,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_single_stamp(lines: &[RenderedLine]) {
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].spans[0].0, " 12:34 ");
+        assert_eq!(lines[1].spans[0].0, " ".repeat(TIMESTAMP_WIDTH));
+    }
+
+    #[test]
+    fn dimmed_plain_block_stamps_only_first_line() {
+        let mut lines = Vec::new();
+        render_ledger_block_plain_dimmed(
+            &mut lines,
+            "Agent",
+            (1, 2, 3),
+            "first\nsecond",
+            TimingSlot::Stamp("12:34"),
+        );
+        assert_single_stamp(&lines);
+    }
+
+    #[test]
+    fn dimmed_styled_block_stamps_only_first_line() {
+        let styled = vec![
+            StyledLine {
+                spans: vec![("first".to_string(), LineStyle::default())],
+            },
+            StyledLine {
+                spans: vec![("second".to_string(), LineStyle::default())],
+            },
+        ];
+        let mut lines = Vec::new();
+        render_ledger_block_styled_dimmed(
+            &mut lines,
+            "Agent",
+            (1, 2, 3),
+            styled,
+            TimingSlot::Stamp("12:34"),
+        );
+        assert_single_stamp(&lines);
     }
 }

@@ -1747,3 +1747,81 @@ fn push_view_missing_file_does_not_crash() {
         status.0
     );
 }
+
+#[test]
+fn uppercase_m_enters_list_search_instead_of_toggling_mouse() {
+    let mut app = app(vec![], vec![]);
+    let mouse_enabled = app.mouse_capture_enabled();
+
+    app.handle_key(KeyCode::Char('M'), KeyModifiers::SHIFT, 10);
+
+    assert_eq!(app.query(), "M");
+    assert_eq!(app.mouse_capture_enabled(), mouse_enabled);
+}
+
+#[test]
+fn uppercase_m_enters_view_search_instead_of_toggling_mouse() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("session.jsonl");
+    std::fs::write(
+        &path,
+        r#"{"type":"user","message":{"role":"user","content":"hello"}}"#,
+    )
+    .unwrap();
+    let mut conv = conversation(
+        Some("Test"),
+        "-tmp-test",
+        "22222222-2222-4222-8222-222222222222",
+        "hello",
+    );
+    conv.path = path;
+    let mut app = app(vec![conv], vec![]);
+    app.selected = Some(0);
+    app.enter_view_mode(80);
+    let mouse_enabled = app.mouse_capture_enabled();
+
+    app.handle_key(KeyCode::Char('/'), KeyModifiers::NONE, 10);
+    app.handle_key(KeyCode::Char('M'), KeyModifiers::SHIFT, 10);
+
+    let state = app.view_state().unwrap();
+    assert_eq!(state.search_mode, ViewSearchMode::Typing);
+    assert_eq!(state.search_query, "M");
+    assert_eq!(app.mouse_capture_enabled(), mouse_enabled);
+}
+
+#[test]
+fn prewarm_completion_redispatches_after_restoring_worker_receiver() {
+    let mut app = app_with_semantic_mode(vec![conversation(
+        Some("Visible"),
+        "-tmp-visible",
+        "22222222-2222-4222-8222-222222222222",
+        "needle",
+    )]);
+    let (_request_tx, request_rx, response_tx) = connect_semantic_search_channels(&mut app);
+    app.list_search_mode = ListSearchMode::Semantic;
+    app.search_generation = 7;
+    app.semantic_search.pending_generation = Some(7);
+    app.semantic_search.prewarm_generation = Some(7);
+    app.query = "needle".to_string();
+
+    response_tx
+        .send(SemanticSearchMessage::Complete(
+            crate::tui::semantic_worker::SemanticSearchResponse {
+                generation: 7,
+                filtered: Vec::new(),
+                metadata: HashMap::new(),
+                error: None,
+                progress: SemanticProgress::Complete,
+                prewarm: true,
+            },
+        ))
+        .unwrap();
+
+    assert!(app.receive_search_results());
+    let commands = drain_semantic_commands(&request_rx);
+    let request = last_semantic_search(&commands).expect("redispatched semantic search");
+    assert_eq!(request.1, "needle");
+    assert!(!request.4);
+    assert_eq!(app.semantic_search.pending_generation, Some(request.0));
+    assert!(app.semantic_search.worker_rx.is_some());
+}

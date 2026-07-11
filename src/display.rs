@@ -510,13 +510,13 @@ fn process_entry<F: OutputFormatter>(
         | LogEntry::Unknown => {
             // Skip metadata and unknown entries
         }
-        LogEntry::Progress { data, .. } => {
-            // Handle agent_progress entries (only when show_thinking is enabled)
-            if show_thinking && let Some(agent_progress) = crate::claude::parse_agent_progress(data)
-            {
-                process_agent_message(formatter, &agent_progress, no_tools);
-            }
+        LogEntry::Progress { data, .. } if show_thinking => {
+            let Some(agent_progress) = crate::claude::parse_agent_progress(data) else {
+                return;
+            };
+            process_agent_message(formatter, &agent_progress, no_tools);
         }
+        LogEntry::Progress { .. } => {}
         LogEntry::User {
             message,
             parent_tool_use_id,
@@ -688,7 +688,11 @@ fn process_assistant_message<F: OutputFormatter>(
 
 /// Get a truncated agent ID for display (max 7 characters)
 fn short_agent_id(agent_id: &str) -> &str {
-    &agent_id[..agent_id.len().min(7)]
+    let end = agent_id
+        .char_indices()
+        .nth(7)
+        .map_or(agent_id.len(), |(index, _)| index);
+    &agent_id[..end]
 }
 
 /// Aggregate text content blocks and render them with the caller-specific formatter.

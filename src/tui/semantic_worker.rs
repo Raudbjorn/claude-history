@@ -407,16 +407,12 @@ fn exact_literal_semantic_response(
     scope: &[usize],
     parsed: &ParsedQuery,
 ) -> SemanticSearchResponse {
-    let plain_conversations = conversations
-        .iter()
-        .map(|conversation| conversation.as_ref().clone())
-        .collect::<Vec<_>>();
-    let corpus = build_literal_corpus(&plain_conversations);
+    let corpus = build_literal_corpus(conversations);
     let scope = scope
         .iter()
         .copied()
         .collect::<std::collections::HashSet<_>>();
-    let filtered = exact_fallback(&plain_conversations, &corpus, parsed.literals(), |index| {
+    let filtered = exact_fallback(conversations, &corpus, parsed.literals(), |index| {
         scope.contains(&index)
     });
 

@@ -321,9 +321,21 @@ fn load_search_data_streaming(
     });
 }
 
+fn validate_session_id(session_id: &str) -> Result<()> {
+    if session_id.is_empty()
+        || !session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(AppError::SessionNotFound(session_id.to_owned()));
+    }
+    Ok(())
+}
+
 /// Find a session JSONL file by UUID across all projects.
 /// Returns the path to the `.jsonl` file if found.
 pub fn find_jsonl_by_uuid(uuid: &str) -> Result<Option<PathBuf>> {
+    validate_session_id(uuid)?;
     let matches = find_all_jsonl_by_uuid(uuid)?;
     Ok(matches.into_iter().next())
 }
@@ -331,6 +343,7 @@ pub fn find_jsonl_by_uuid(uuid: &str) -> Result<Option<PathBuf>> {
 /// Find all session JSONL files by UUID across all projects.
 /// A session may exist in multiple project directories due to cross-project forking.
 fn find_all_jsonl_by_uuid(uuid: &str) -> Result<Vec<PathBuf>> {
+    validate_session_id(uuid)?;
     let root = super::get_claude_projects_root()?;
     if !root.exists() {
         return Ok(Vec::new());
@@ -358,10 +371,7 @@ fn find_all_jsonl_by_uuid(uuid: &str) -> Result<Vec<PathBuf>> {
 /// Removes both the .jsonl file and the session subdirectory (tool-results/, subagents/).
 /// Returns the number of files deleted.
 pub fn delete_session_by_uuid(uuid: &str) -> Result<usize> {
-    // Validate format to prevent path traversal
-    if uuid.is_empty() || !uuid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return Err(AppError::SessionNotFound(uuid.to_owned()));
-    }
+    validate_session_id(uuid)?;
 
     let matches = find_all_jsonl_by_uuid(uuid)?;
     if matches.is_empty() {
@@ -591,6 +601,14 @@ pub fn list_projects(root: &Path) -> Result<Vec<Project>> {
     Ok(projects)
 }
 
+// Keeping the conversation inline avoids one heap allocation per cache miss.
+#[allow(clippy::large_enum_variant)]
+enum ParseOutcome {
+    Conversation(Conversation),
+    Empty,
+    Failed,
+}
+
 /// Find and process all conversation files in one pass, using per-project cache
 pub fn load_conversations(
     projects_dir: &Path,
@@ -685,46 +703,50 @@ pub fn load_conversations(
         ),
     );
 
-    // Parse only cache misses in parallel
-    // Returns (Option<Conversation>, filename, file_size, mtime) — None for empty/filtered files
-    let parse_results: Vec<(Option<Conversation>, String, u64, Option<SystemTime>)> =
-        files_to_parse
-            .into_par_iter()
-            .map(|(path, modified, file_size)| {
-                let filename = path
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or("unknown")
-                    .to_owned();
+    // Parse only cache misses in parallel. Failed parses remain uncached so a
+    // transient error is retried on the next load.
+    let parse_results: Vec<(ParseOutcome, String, u64, Option<SystemTime>)> = files_to_parse
+        .into_par_iter()
+        .map(|(path, modified, file_size)| {
+            let filename = path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("unknown")
+                .to_owned();
 
-                match process_conversation_file(path, modified, debug_level) {
-                    Ok(Some(mut conversation)) => {
-                        conversation.preview = if show_last {
-                            conversation.preview_last.clone()
-                        } else {
-                            conversation.preview_first.clone()
-                        };
-                        debug::debug(
-                            debug_level,
-                            &format!("Parsed {}: {}", filename, conversation.preview),
-                        );
-                        (Some(conversation), filename, file_size, modified)
-                    }
-                    Ok(None) => (None, filename, file_size, modified),
-                    Err(e) => {
-                        debug::warn(
-                            debug_level,
-                            &format!("Error processing {}: {}", filename, e),
-                        );
-                        (None, filename, file_size, modified)
-                    }
+            match process_conversation_file(path, modified, debug_level) {
+                Ok(Some(mut conversation)) => {
+                    conversation.preview = if show_last {
+                        conversation.preview_last.clone()
+                    } else {
+                        conversation.preview_first.clone()
+                    };
+                    debug::debug(
+                        debug_level,
+                        &format!("Parsed {}: {}", filename, conversation.preview),
+                    );
+                    (
+                        ParseOutcome::Conversation(conversation),
+                        filename,
+                        file_size,
+                        modified,
+                    )
                 }
-            })
-            .collect();
+                Ok(None) => (ParseOutcome::Empty, filename, file_size, modified),
+                Err(e) => {
+                    debug::warn(
+                        debug_level,
+                        &format!("Error processing {}: {}", filename, e),
+                    );
+                    (ParseOutcome::Failed, filename, file_size, modified)
+                }
+            }
+        })
+        .collect();
 
-    // Separate conversations from empty results (for negative caching)
-    for (conv, _, _, _) in &parse_results {
-        if let Some(conv) = conv {
+    // Separate conversations from empty and failed results.
+    for (outcome, _, _, _) in &parse_results {
+        if let ParseOutcome::Conversation(conv) = outcome {
             conversations.push(conv.clone());
         }
     }
@@ -771,9 +793,9 @@ pub fn load_conversations(
             }
         }
 
-        // Add negative cache entries for files that parsed to nothing
-        for (conv, filename, file_size, modified) in &parse_results {
-            if conv.is_none()
+        // Cache only files that parsed successfully but contained no conversation.
+        for (outcome, filename, file_size, modified) in &parse_results {
+            if matches!(outcome, ParseOutcome::Empty)
                 && let Some(mtime) = modified
             {
                 new_cache.insert(filename.to_owned(), cache::empty_entry(*file_size, *mtime));
@@ -785,8 +807,8 @@ pub fn load_conversations(
         // Also write search cache for freshly parsed conversations
         let mut new_search_cache =
             cache::read_project_search_cache(project_dir_name).unwrap_or_default();
-        for (conv, filename, file_size, modified) in &parse_results {
-            if let Some(conv) = conv
+        for (outcome, filename, file_size, modified) in &parse_results {
+            if let ParseOutcome::Conversation(conv) = outcome
                 && let Some(mtime) = modified
             {
                 new_search_cache.insert(
@@ -935,5 +957,30 @@ mod tests {
         drop(cache_cleanup);
         assert!(cache::read_project_cache(&project_name).is_none());
         assert!(cache::read_project_search_cache(&project_name).is_none());
+    }
+    #[test]
+    fn invalid_session_ids_are_rejected_before_lookup() {
+        for invalid in ["", "../escape", "nested/session", "two..dots", "bad_name"] {
+            assert!(validate_session_id(invalid).is_err(), "{invalid}");
+        }
+        assert!(validate_session_id("12345678-1234-4234-9234-123456789abc").is_ok());
+    }
+
+    #[test]
+    fn parse_failures_are_not_written_as_negative_cache_entries() {
+        let project_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project_dir.path().join("broken.jsonl")).unwrap();
+        let project_name = format!(
+            "test-loader-failed-parse-{}",
+            project_dir.path().file_name().unwrap().to_string_lossy()
+        );
+        let _cache_cleanup = ProjectCacheCleanup::new(project_name.clone());
+
+        let conversations =
+            load_conversations(project_dir.path(), false, &project_name, None).unwrap();
+
+        assert!(conversations.is_empty());
+        let cache = cache::read_project_cache(&project_name).unwrap_or_default();
+        assert!(!cache.contains_key("broken.jsonl"));
     }
 }

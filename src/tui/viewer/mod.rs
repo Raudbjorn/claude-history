@@ -536,10 +536,10 @@ pub fn scan_subagent_dir(
                             // Prefer exact toolUseId match from meta.json; fall back to description
                             if let Some(&agent_path) = id_to_path.get(id.as_str()) {
                                 links.insert(id.clone(), agent_path.clone());
-                            } else if let Some(desc) = input["description"].as_str() {
-                                if let Some(&agent_path) = desc_to_path.get(desc) {
-                                    links.insert(id.clone(), agent_path.clone());
-                                }
+                            } else if let Some(desc) = input["description"].as_str()
+                                && let Some(&agent_path) = desc_to_path.get(desc)
+                            {
+                                links.insert(id.clone(), agent_path.clone());
                             }
                         }
                         _ => {}

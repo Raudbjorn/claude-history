@@ -345,6 +345,8 @@ impl App {
                 applied = true;
             }
         }
+
+        let mut redispatch_query = None;
         if let Some(rx) = self.semantic_search.worker_rx.take() {
             let active_generation = self.search_generation;
             while let Ok(message) = rx.try_recv() {
@@ -379,10 +381,7 @@ impl App {
                                     self.semantic_search.error = response.error;
                                     self.semantic_search.results = response.metadata;
                                     if !self.query.trim().is_empty() {
-                                        self.dispatch_semantic_search(
-                                            self.query.trim().to_string(),
-                                            false,
-                                        );
+                                        redispatch_query = Some(self.query.trim().to_string());
                                     }
                                 }
                                 applied = true;
@@ -401,6 +400,10 @@ impl App {
                 }
             }
             self.semantic_search.worker_rx = Some(rx);
+            if let Some(query) = redispatch_query {
+                self.dispatch_semantic_search(query, false);
+                applied = true;
+            }
         }
         applied
     }

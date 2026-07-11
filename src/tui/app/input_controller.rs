@@ -455,10 +455,6 @@ impl App {
                 self.delete_view_search_word_backwards();
                 None
             }
-            KeyCode::Char('M') => {
-                self.mouse_capture_enabled = !self.mouse_capture_enabled;
-                Some(Action::ToggleMouse)
-            }
             KeyCode::Char(c) => {
                 self.push_view_search_char(c);
                 None
@@ -547,10 +543,6 @@ impl App {
                 }
             }
             KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
-            KeyCode::Char('M') => {
-                self.mouse_capture_enabled = !self.mouse_capture_enabled;
-                Some(Action::ToggleMouse)
-            }
             KeyCode::Char('t') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.semantic_toggle_available() {
                     self.toggle_list_search_mode();
