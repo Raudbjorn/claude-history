@@ -7,10 +7,6 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Verify the system Python embedding dependency
-python-deps:
-    @python -c 'import fastembed; print(f"python-fastembed {fastembed.__version__}")'
-
 # Build the debug binary
 build:
     cargo build --locked
@@ -36,20 +32,20 @@ lint:
     cargo clippy --locked --all-targets
 
 # Run the complete local verification suite
-verify: python-deps fmt-check lint test
+verify: fmt-check lint test
 
 # Install the release binary globally
-install: python-deps
+install:
     cargo install --offline --path . --locked
 
 # Install the debug binary globally via symlink
-install-dev: python-deps
+install-dev:
     cargo build --locked
     mkdir -p ~/.cargo/bin
     ln -sf "$(pwd)/target/debug/claude-history" ~/.cargo/bin/claude-history
 
 # Run the application
-run *ARGS: python-deps
+run *ARGS:
     cargo run --locked -- "$@"
 
 # Remove Cargo build artifacts

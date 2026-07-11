@@ -171,31 +171,9 @@ fn install_support_files(extract_dir: &Path, current_exe: &Path) -> Result<()> {
                 .map_err(|e| AppError::UpdateError(format!("Failed to install library: {e}")))?;
         }
     }
-
-    create_runtime_symlink(exe_dir, "libonnxruntime.so")?;
-    create_runtime_symlink(exe_dir, "libonnxruntime.dylib")?;
     Ok(())
 }
 
-#[cfg(unix)]
-fn create_runtime_symlink(exe_dir: &Path, name: &str) -> Result<()> {
-    use std::os::unix::fs::symlink;
-
-    let target = Path::new("lib").join(name);
-    let link = exe_dir.join(name);
-    let _ = std::fs::remove_file(&link);
-    if exe_dir.join(&target).exists() {
-        symlink(&target, &link).map_err(|e| {
-            AppError::UpdateError(format!("Failed to install library symlink: {e}"))
-        })?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn create_runtime_symlink(_exe_dir: &Path, _name: &str) -> Result<()> {
-    Ok(())
-}
 
 /// Replace the current binary with the new one, with rollback on failure.
 fn replace_binary(new_binary: &Path, current_exe: &Path) -> Result<()> {
