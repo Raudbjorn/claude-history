@@ -484,11 +484,16 @@ pub fn scan_subagent_dir(
         .filter_map(|af| af.tool_use_id.as_deref().map(|id| (id, &af.path)))
         .collect();
 
-    // description → path (fallback when toolUseId absent; last writer wins for dupes)
-    let desc_to_path: HashMap<&str, &PathBuf> = agent_files
-        .iter()
-        .filter_map(|af| af.description.as_deref().map(|d| (d, &af.path)))
-        .collect();
+    // Description fallback is safe only when exactly one agent file has that description.
+    let mut desc_to_path: HashMap<&str, Option<&PathBuf>> = HashMap::new();
+    for agent_file in &agent_files {
+        if let Some(description) = agent_file.description.as_deref() {
+            desc_to_path
+                .entry(description)
+                .and_modify(|path| *path = None)
+                .or_insert(Some(&agent_file.path));
+        }
+    }
 
     for renderable in entries {
         if let LogEntry::Assistant { message, .. } = &renderable.entry {
@@ -537,7 +542,8 @@ pub fn scan_subagent_dir(
                             if let Some(&agent_path) = id_to_path.get(id.as_str()) {
                                 links.insert(id.clone(), agent_path.clone());
                             } else if let Some(desc) = input["description"].as_str()
-                                && let Some(&agent_path) = desc_to_path.get(desc)
+                                && let Some(agent_path) =
+                                    desc_to_path.get(desc).and_then(|path| *path)
                             {
                                 links.insert(id.clone(), agent_path.clone());
                             }

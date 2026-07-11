@@ -80,8 +80,8 @@ fn format_model_name(model: &str) -> String {
     }
 
     // Unknown format - truncate if too long
-    if model.len() > 20 {
-        format!("{}…", &model[..19])
+    if model.chars().count() > 20 {
+        format!("{}…", model.chars().take(19).collect::<String>())
     } else {
         model.to_string()
     }
@@ -3648,6 +3648,13 @@ mod tests {
         let formatted = format_model_name(long_name);
         // 19 chars + ellipsis (3 bytes in UTF-8)
         assert!(formatted.chars().count() <= 20);
+        assert!(formatted.ends_with('…'));
+    }
+
+    #[test]
+    fn test_format_model_name_truncates_unicode_at_character_boundary() {
+        let formatted = format_model_name("ééééééééééééééééééééé");
+        assert_eq!(formatted.chars().count(), 20);
         assert!(formatted.ends_with('…'));
     }
 
