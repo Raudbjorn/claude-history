@@ -647,16 +647,3 @@ $ just check
 This runs `cargo fmt`, `cargo clippy --fix`, `cargo test`, and `cargo build`.
 GitHub Actions also verifies the Nix build on pull requests, main, and release
 tags.
-
-## Related projects
-
-- [workmux](https://github.com/raine/workmux) — Git worktrees + tmux windows for
-  parallel AI agent workflows
-- [git-surgeon](https://github.com/raine/git-surgeon) — Non-interactive
-  hunk-level git staging for AI agents
-- [consult-llm](https://github.com/raine/consult-llm) — Consult other AI models
-  from your agent workflow
-- [tmux-file-picker](https://github.com/raine/tmux-file-picker) — Pop up fzf in
-  tmux to quickly insert file paths, perfect for AI coding assistants
-- [tmux-agent-usage](https://github.com/raine/tmux-agent-usage) — Display AI agent
-  rate limit usage in your tmux status bar
