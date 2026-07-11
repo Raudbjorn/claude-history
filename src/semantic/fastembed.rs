@@ -28,13 +28,13 @@ impl FastembedEmbedder {
             .with_cache_dir(cache_dir)
             .with_show_download_progress(show_download_progress);
         let model = TextEmbedding::try_new(init_options)
-            .map_err(|e| AppError::ConfigError(format!("fastembed init failed: {e}")))?;
+            .map_err(|e| AppError::SemanticSearch(format!("fastembed init failed: {e}")))?;
         Ok(Self { model })
     }
     fn embed(&mut self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         self.model
             .embed(texts, None)
-            .map_err(|e| AppError::ConfigError(format!("fastembed embed failed: {e}")))
+            .map_err(|e| AppError::SemanticSearch(format!("fastembed embed failed: {e}")))
     }
 }
 
