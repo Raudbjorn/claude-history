@@ -254,7 +254,7 @@ The companion Claude Code skill at
 tells agents how to use this workflow without pasting whole transcripts into
 context.
 
-<img src="/meta/agent-protocol.webp" />
+<img src="/meta/agent-protocol.webp" alt="Agent protocol search-and-read workflow" />
 
 An agent usually runs:
 
@@ -438,7 +438,7 @@ $ claude-history --plain
 This produces simple `Role: content` output without colors, text wrapping, or
 markdown rendering, suitable for piping to other tools or LLMs:
 
-```
+```text
 You: How do I fix this bug?
 
 Claude: Looking at the code, the issue is...

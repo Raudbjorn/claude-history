@@ -27,12 +27,13 @@ impl TerminalGuard {
         let mut stderr = io::stderr();
         if let Err(e) = crossterm::execute!(stderr, EnterAlternateScreen, EnableMouseCapture) {
             let _ = terminal::disable_raw_mode();
+            let _ = crossterm::execute!(stderr, DisableMouseCapture, LeaveAlternateScreen);
             return Err(AppError::Io(io::Error::other(e)));
         }
 
         let backend = CrosstermBackend::new(stderr);
         let terminal = match Terminal::new(backend) {
-            Ok(t) => t,
+            Ok(terminal) => terminal,
             Err(e) => {
                 let _ = terminal::disable_raw_mode();
                 let _ =

@@ -258,10 +258,12 @@ pub enum AgentContent {
 /// Format a parent_tool_use_id into a short display ID.
 /// Strips the "toolu_" prefix and takes the first 7 characters.
 pub fn short_parent_id(parent_tool_use_id: &str) -> String {
-    let stripped = parent_tool_use_id
+    parent_tool_use_id
         .strip_prefix("toolu_")
-        .unwrap_or(parent_tool_use_id);
-    stripped[..stripped.len().min(7)].to_string()
+        .unwrap_or(parent_tool_use_id)
+        .chars()
+        .take(7)
+        .collect()
 }
 
 /// Attempt to parse agent progress data from a Progress entry
@@ -395,5 +397,10 @@ mod tests {
             other => panic!("expected blocks, got {other:?}"),
         }
         assert_eq!(extract_text_from_user(&message), "summarize this");
+    }
+    #[test]
+    fn short_parent_id_truncates_at_unicode_boundaries() {
+        assert_eq!(short_parent_id("toolu_你好世界abc"), "你好世界abc");
+        assert_eq!(short_parent_id("你好世界abcd"), "你好世界abc");
     }
 }

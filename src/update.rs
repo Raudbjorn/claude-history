@@ -274,8 +274,8 @@ fn do_update(
         )));
     }
 
-    replace_binary(&new_binary, current_exe)?;
     install_support_files(&extract_dir, current_exe)?;
+    replace_binary(&new_binary, current_exe)?;
 
     Ok(format!(
         "Updated {BIN_NAME} v{CURRENT_VERSION} -> v{latest_version}"

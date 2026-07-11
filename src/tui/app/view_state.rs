@@ -108,7 +108,7 @@ impl App {
                 };
                 let rendered = render_parsed_conversation(&entries, &options);
 
-                let short_id = &tool_use_id[..tool_use_id.len().min(7)];
+                let short_id: String = tool_use_id.chars().take(7).collect();
                 let header_text = format!("┌ subagent: {} ", short_id);
                 let header_line = RenderedLine::new(vec![(
                     header_text,
@@ -500,9 +500,7 @@ impl App {
     }
 
     fn view_line_at_row(&self, row: u16, frame_area: Rect) -> Option<usize> {
-        let Some(state) = self.view_state() else {
-            return None;
-        };
+        let state = self.view_state()?;
         if self.dialog_mode != DialogMode::None {
             return None;
         }
@@ -522,9 +520,7 @@ impl App {
     }
 
     fn view_tool_output_at_line(&self, line_idx: usize) -> Option<ToolOutputId> {
-        let Some(state) = self.view_state() else {
-            return None;
-        };
+        let state = self.view_state()?;
         state.rendered_lines.get(line_idx).and_then(|line| {
             if line.clickable {
                 line.tool_output_id.clone()

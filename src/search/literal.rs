@@ -1,5 +1,6 @@
 use crate::history::Conversation;
 use rayon::prelude::*;
+use std::borrow::Borrow;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,24 +62,33 @@ pub struct LiteralCorpusEntry {
     pub text: String,
 }
 
-pub fn build_literal_corpus(conversations: &[Conversation]) -> Vec<LiteralCorpusEntry> {
+pub fn build_literal_corpus<C>(conversations: &[C]) -> Vec<LiteralCorpusEntry>
+where
+    C: Borrow<Conversation> + Sync,
+{
     build_literal_corpus_with(conversations, false)
 }
 
-pub fn build_agent_literal_corpus(conversations: &[Conversation]) -> Vec<LiteralCorpusEntry> {
+pub fn build_agent_literal_corpus<C>(conversations: &[C]) -> Vec<LiteralCorpusEntry>
+where
+    C: Borrow<Conversation> + Sync,
+{
     build_literal_corpus_with(conversations, true)
 }
 
-fn build_literal_corpus_with(
-    conversations: &[Conversation],
+fn build_literal_corpus_with<C>(
+    conversations: &[C],
     include_agent_text: bool,
-) -> Vec<LiteralCorpusEntry> {
+) -> Vec<LiteralCorpusEntry>
+where
+    C: Borrow<Conversation> + Sync,
+{
     conversations
         .par_iter()
         .enumerate()
         .map(|(index, conversation)| LiteralCorpusEntry {
             index,
-            text: literal_text(conversation, include_agent_text),
+            text: literal_text(conversation.borrow(), include_agent_text),
         })
         .collect()
 }
@@ -101,12 +111,15 @@ pub fn match_literal_ranges(text: &str, literals: &[Literal]) -> Vec<(usize, usi
         .collect()
 }
 
-pub fn exact_fallback(
-    conversations: &[Conversation],
+pub fn exact_fallback<C>(
+    conversations: &[C],
     corpus: &[LiteralCorpusEntry],
     literals: &[Literal],
     scope: impl Fn(usize) -> bool + Sync,
-) -> Vec<usize> {
+) -> Vec<usize>
+where
+    C: Borrow<Conversation> + Sync,
+{
     if literals.is_empty() {
         return Vec::new();
     }
@@ -114,7 +127,7 @@ pub fn exact_fallback(
     let mut matches = corpus
         .par_iter()
         .filter(|entry| scope(entry.index) && matches_all_literals(&entry.text, literals))
-        .map(|entry| (entry.index, conversations[entry.index].timestamp))
+        .map(|entry| (entry.index, conversations[entry.index].borrow().timestamp))
         .collect::<Vec<_>>();
 
     matches.sort_unstable_by(|a, b| b.1.cmp(&a.1));

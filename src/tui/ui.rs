@@ -115,30 +115,26 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
-/// Render the list mode (conversation browser)
-fn render_list_mode(frame: &mut Frame, app: &App) {
-    let area = frame.area();
+pub(super) struct ListLayoutRects {
+    pub search: Rect,
+    pub list: Rect,
+    pub bottom: Option<Rect>,
+}
 
-    // Outer border wrapping the entire app
-    let outer_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(rgb(th().border)));
-    let inner_area = outer_block.inner(area);
-    frame.render_widget(outer_block, area);
-
-    // Graceful degradation for tiny terminals - skip bottom bar if too small
-    if inner_area.height < 4 {
+pub(super) fn list_layout_rects(area: Rect) -> ListLayoutRects {
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    if inner.height < 4 {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(2), Constraint::Min(1)])
-            .split(inner_area);
-        render_search_bar(frame, app, chunks[0]);
-        render_list(frame, app, chunks[1]);
-        return;
+            .split(inner);
+        return ListLayoutRects {
+            search: chunks[0],
+            list: chunks[1],
+            bottom: None,
+        };
     }
 
-    // Always reserve space for bottom bar (status, dialog, or hotkeys)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -146,20 +142,38 @@ fn render_list_mode(frame: &mut Frame, app: &App) {
             Constraint::Min(1),
             Constraint::Length(1),
         ])
-        .split(inner_area);
+        .split(inner);
+    ListLayoutRects {
+        search: chunks[0],
+        list: chunks[1],
+        bottom: Some(chunks[2]),
+    }
+}
 
-    render_search_bar(frame, app, chunks[0]);
-    render_list(frame, app, chunks[1]);
+/// Render the list mode (conversation browser)
+fn render_list_mode(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let layout = list_layout_rects(area);
 
-    // Render bottom bar: confirm dialog > status message > hotkeys
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(rgb(th().border)));
+    frame.render_widget(outer_block, area);
+    render_search_bar(frame, app, layout.search);
+    render_list(frame, app, layout.list);
+
+    let Some(bottom) = layout.bottom else {
+        return;
+    };
     if *app.dialog_mode() == DialogMode::ConfirmDelete {
-        render_confirm_dialog(frame, chunks[2]);
+        render_confirm_dialog(frame, bottom);
     } else if let Some((msg, instant)) = app.status_message()
         && instant.elapsed() < STATUS_TTL
     {
-        render_status_message(frame, msg, chunks[2]);
+        render_status_message(frame, msg, bottom);
     } else {
-        render_list_status_bar(frame, app, chunks[2]);
+        render_list_status_bar(frame, app, bottom);
     }
 
     match app.dialog_mode() {
@@ -841,21 +855,21 @@ fn render_view_status_bar(frame: &mut Frame, app: &App, state: &ViewState, area:
     ];
 
     // Breadcrumb when inside a subagent view
-    if app.view_stack_depth() > 1 {
-        if let Some(view_state) = app.view_state() {
-            let short_id = view_state
-                .entered_from
-                .as_deref()
-                .map(|id| &id[..id.len().min(7)])
-                .unwrap_or("?");
-            spans.insert(
-                2,
-                Span::styled(
-                    format!("{}→ ", short_id),
-                    Style::default().fg(rgb(th().accent_dim)),
-                ),
-            );
-        }
+    if app.view_stack_depth() > 1
+        && let Some(view_state) = app.view_state()
+    {
+        let short_id = view_state
+            .entered_from
+            .as_deref()
+            .map(|id| id.chars().take(7).collect::<String>())
+            .unwrap_or_else(|| "?".to_string());
+        spans.insert(
+            2,
+            Span::styled(
+                format!("↳{} ", short_id),
+                Style::default().fg(rgb(th().accent_dim)),
+            ),
+        );
     }
 
     // Mouse capture off indicator

@@ -229,7 +229,7 @@ fn run() -> Result<()> {
     // Handle --debug-search flag: debug search result scoring
     if let Some(ref query) = args.debug_search {
         let mut conversations = history::load_all_conversations(show_last, args.debug)?;
-        conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        conversations.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
 
         let searchable = search::precompute_search_text(&conversations);
         let now = chrono::Local::now();
@@ -308,13 +308,13 @@ fn run() -> Result<()> {
 
     if let Some(ref query) = args.debug_semantic_search {
         let mut conversations = history::load_all_conversations(show_last, args.debug)?;
-        conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        conversations.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
         return semantic_cli::debug_search(query, &conversations, args.local);
     }
 
     if args.generate_semantic_cache {
         let mut conversations = history::load_all_conversations(show_last, args.debug)?;
-        conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        conversations.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
         return semantic_cli::generate_cache(&conversations, args.local);
     }
 
@@ -325,7 +325,7 @@ fn run() -> Result<()> {
     // Handle --semantic-search flag
     if let Some(ref query) = args.semantic_search {
         let mut conversations = history::load_all_conversations(show_last, args.debug)?;
-        conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        conversations.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
         return semantic_cli::run(query, &conversations, args.semantic_top, args.local);
     }
 
@@ -529,7 +529,7 @@ fn run_agent_search(args: &cli::AgentSearchArgs) -> Result<String> {
     let search_config = config.search.unwrap_or_default();
     let tui_config = config.tui.unwrap_or_default();
     let mut conversations = history::load_all_conversations(false, None)?;
-    conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    conversations.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
     let current_project_dir_name = if args.local {
         std::env::current_dir()
             .ok()

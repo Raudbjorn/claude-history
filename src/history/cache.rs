@@ -75,14 +75,21 @@ pub struct CachedParseError {
 
 /// Get the cache directory for per-project cache files.
 /// Respects CLAUDE_CONFIG_DIR to namespace caches per config root.
+fn stable_path_hash(path: &str) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    path.as_bytes().iter().fold(FNV_OFFSET, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+    })
+}
+
 fn cache_dir() -> Option<PathBuf> {
     let base = home::home_dir()?.join(".cache").join("claude-history");
     if let Ok(config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
-        // Namespace by config dir to avoid cross-config cache collisions
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(&config_dir, &mut hasher);
-        let hash = std::hash::Hasher::finish(&hasher);
-        Some(base.join(format!("config-{:016x}", hash)).join("projects"))
+        // Namespace by config dir to avoid cross-config cache collisions.
+        let hash = stable_path_hash(&config_dir);
+        Some(base.join(format!("config-{hash:016x}")).join("projects"))
     } else {
         Some(base.join("projects"))
     }
@@ -567,5 +574,12 @@ mod tests {
     #[test]
     fn missing_cache_returns_none() {
         assert!(read_project_cache("nonexistent-project-xyz-12345").is_none());
+    }
+    #[test]
+    fn config_namespace_hash_is_stable() {
+        assert_eq!(
+            stable_path_hash("/tmp/claude-config"),
+            0x479e_a524_94da_dc33
+        );
     }
 }
