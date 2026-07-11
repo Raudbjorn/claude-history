@@ -75,7 +75,7 @@ fn run_delete_empty_command(args: DeleteEmptyArgs) -> Result<()> {
         println!("{}", delete_empty_summary_line(args.yes, 0));
         if summary.skipped_unparsable > 0 {
             println!(
-                "Skipped {} transcript(s) with unparsable lines (kept; not eligible for deletion).",
+                "Skipped {} unreadable or unparsable transcript(s) (kept; not eligible for deletion).",
                 summary.skipped_unparsable
             );
         }
@@ -114,7 +114,7 @@ fn run_delete_empty_command(args: DeleteEmptyArgs) -> Result<()> {
     );
     if summary.skipped_unparsable > 0 {
         println!(
-            "Skipped {} transcript(s) with unparsable lines (kept; not eligible for deletion).",
+            "Skipped {} unreadable or unparsable transcript(s) (kept; not eligible for deletion).",
             summary.skipped_unparsable
         );
     }
