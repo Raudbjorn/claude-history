@@ -578,7 +578,6 @@ pub(crate) fn normalize_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<&str>>().join(" ")
 }
 
-/// Truncate a string to at most `max` bytes, on a char boundary
 #[cfg(test)]
 mod tests {
     use super::*;

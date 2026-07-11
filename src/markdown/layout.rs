@@ -557,7 +557,7 @@ impl LayoutEngine {
             if self.current_width + word_width > self.max_width && self.current_width > 0 {
                 self.break_line_with_indent();
             }
-            self.push_run(word, attrs.clone());
+            self.push_wrapped_token(word, attrs.clone());
         }
     }
 
@@ -572,13 +572,38 @@ impl LayoutEngine {
             self.break_line_with_indent();
         }
 
-        self.push_run(
+        self.push_wrapped_token(
             code,
             Attrs {
                 code: true,
                 ..Attrs::default()
             },
         );
+    }
+
+    /// Push a token, hard-wrapping it across lines when it is wider than the
+    /// space remaining on the line (long URLs, paths, hashes, inline code).
+    fn push_wrapped_token(&mut self, token: &str, attrs: Attrs) {
+        if self.current_width + token.width() <= self.max_width {
+            self.push_run(token, attrs);
+            return;
+        }
+        let mut chunk = String::new();
+        let mut chunk_width = 0usize;
+        for ch in token.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if self.current_width + chunk_width + ch_width > self.max_width && chunk_width > 0 {
+                self.push_run(&chunk, attrs.clone());
+                chunk.clear();
+                chunk_width = 0;
+                self.break_line_with_indent();
+            }
+            chunk.push(ch);
+            chunk_width += ch_width;
+        }
+        if !chunk.is_empty() {
+            self.push_run(&chunk, attrs);
+        }
     }
 
     fn soft_break(&mut self) {
@@ -800,5 +825,33 @@ mod tests {
         let result = render_to_text(input, 80);
         assert!(result.contains("1. First"));
         assert!(result.contains("2. Second"));
+    }
+
+    #[test]
+    fn overlong_token_hard_wraps_within_max_width() {
+        let url = format!("https://example.com/{}", "a".repeat(60));
+        let result = render_to_text(&url, 30);
+
+        assert!(
+            result
+                .lines()
+                .all(|line| UnicodeWidthStr::width(line) <= 30)
+        );
+        let rejoined: String = result.lines().collect();
+        assert_eq!(rejoined, url);
+    }
+
+    #[test]
+    fn overlong_inline_code_hard_wraps_within_max_width() {
+        let input = format!("`{}`", "x".repeat(50));
+        let result = render_to_text(&input, 20);
+
+        assert!(
+            result
+                .lines()
+                .all(|line| UnicodeWidthStr::width(line) <= 20)
+        );
+        let rejoined: String = result.lines().collect();
+        assert!(rejoined.contains(&"x".repeat(50)));
     }
 }
