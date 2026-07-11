@@ -42,7 +42,7 @@ discover the matching transcript folder automatically.
 cargo install claude-history
 ```
 
-> **Note:** Semantic search downloads the BGE-small-en-v1.5 model (~130 MB) to `~/.cache/claude-history/semantic/fastembed` on first run. No Python installation is required.
+> **Note:** Semantic search downloads the BGE-base-en-v1.5 model (~110 MB) to `~/.cache/claude-history/semantic/fastembed` on first run. No Python installation is required.
 
 ## Updating
 
