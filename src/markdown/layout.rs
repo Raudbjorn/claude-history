@@ -661,6 +661,9 @@ fn render_table_to_lines(rows: &[Vec<String>], max_width: usize) -> Vec<Line> {
     }
 
     let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if num_cols == 0 {
+        return vec![];
+    }
     let mut col_widths = vec![0usize; num_cols];
 
     for row in rows {
@@ -675,6 +678,9 @@ fn render_table_to_lines(rows: &[Vec<String>], max_width: usize) -> Vec<Line> {
     }
 
     let available = max_width.saturating_sub(num_cols + 1 + 2 * num_cols);
+    if available < num_cols {
+        return render_compact_table_to_lines(rows, max_width);
+    }
     while col_widths.iter().sum::<usize>() > available {
         let mut widest = 0;
         for index in 1..col_widths.len() {
@@ -687,6 +693,7 @@ fn render_table_to_lines(rows: &[Vec<String>], max_width: usize) -> Vec<Line> {
         }
         col_widths[widest] -= 1;
     }
+    debug_assert!(col_widths.iter().sum::<usize>() <= available);
 
     let h = '─';
     let v = '│';
@@ -794,6 +801,36 @@ fn render_table_to_lines(rows: &[Vec<String>], max_width: usize) -> Vec<Line> {
         }],
     });
 
+    lines
+}
+
+/// Preserve table content when the terminal is too narrow for even one
+/// character per boxed column. Cells are stacked vertically because no boxed
+/// representation can satisfy `max_width` in that case.
+fn render_compact_table_to_lines(rows: &[Vec<String>], max_width: usize) -> Vec<Line> {
+    if max_width == 0 {
+        return vec![];
+    }
+
+    let mut lines = Vec::new();
+    for (row_index, row) in rows.iter().enumerate() {
+        if row_index > 0 && !lines.is_empty() {
+            lines.push(Line { runs: Vec::new() });
+        }
+        for cell in row {
+            let wrapped = textwrap::wrap(cell.trim(), max_width);
+            if wrapped.is_empty() {
+                lines.push(Line { runs: Vec::new() });
+                continue;
+            }
+            lines.extend(wrapped.into_iter().map(|text| Line {
+                runs: vec![Run {
+                    text: text.into_owned(),
+                    attrs: Attrs::default(),
+                }],
+            }));
+        }
+    }
     lines
 }
 
@@ -932,5 +969,17 @@ mod tests {
                 .iter()
                 .all(|line| !line.starts_with('├'))
         );
+    }
+
+    #[test]
+    fn pathological_narrow_table_stays_within_max_width() {
+        let input = "| A | B | C |\n| --- | --- | --- |\n| one | two | tri |";
+
+        let result = render_to_text(input, 4);
+
+        assert!(result.lines().all(|line| UnicodeWidthStr::width(line) <= 4));
+        assert!(result.contains("one"));
+        assert!(result.contains("two"));
+        assert!(result.contains("tri"));
     }
 }
